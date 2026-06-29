@@ -2283,23 +2283,28 @@
         }
 
         function save() { 
-            cardRenderLimit = 15;
             localStorage.setItem('notes', JSON.stringify(notes)); 
-            render(); 
+            render(true); 
             if (currentView === 'table') renderTable();
         }
 
         function saveArchive() {
             archiveRenderLimits = {};
+            renderedArchiveCounts = {};
             localStorage.setItem('archived_notes', JSON.stringify(archivedNotes));
             renderArchiveHistory();
             if (currentView === 'table') renderTable();
         }
 
-        function render() {
+        function render(forceReset = false) {
             const list = document.getElementById('notesList');
             if (!list) return;
-            list.innerHTML = '';
+            
+            if (forceReset) {
+                list.innerHTML = '';
+                renderedCardCount = 0;
+                cardRenderLimit = 15;
+            }
 
             let listTasks = [];
             if (currentFilter === 'all') {
@@ -2347,10 +2352,14 @@
                 }
             });
 
-            // 分页/滚动追加懒渲染：截取前 cardRenderLimit 条
-            const toRender = filtered.slice(0, cardRenderLimit);
+            // 增量范围：从已渲染的 renderedCardCount 到当前加载上限 cardRenderLimit
+            const start = renderedCardCount;
+            const end = Math.min(filtered.length, cardRenderLimit);
+            
+            if (start < end) {
+                const toRender = filtered.slice(start, end);
 
-            toRender.forEach(n => {
+                toRender.forEach(n => {
                 const card = document.createElement('div');
                 card.className = 'note-card';
                 const pColor = n.p === 1 ? '#22cc88' : n.p === 2 ? '#ffcc00' : '#ff4444';
@@ -2404,13 +2413,15 @@
                 `;
                 list.appendChild(card);
             });
+                renderedCardCount = end;
+            }
 
             // 滚动加载哨兵机制
             const sentinel = document.getElementById('notesListSentinel');
             if (sentinel) {
-                if (filtered.length > cardRenderLimit) {
+                if (filtered.length > renderedCardCount) {
                     sentinel.style.display = 'block';
-                    sentinel.textContent = `向下滚动加载更多历史任务 (已展示 ${cardRenderLimit}/${filtered.length})`;
+                    sentinel.textContent = `向下滚动加载更多历史任务 (已展示 ${renderedCardCount}/${filtered.length})`;
                 } else {
                     sentinel.style.display = 'none';
                 }
@@ -3453,7 +3464,7 @@
             document.getElementById('filter' + (filter === 'all' ? 'All' : filter === 'undone' ? 'Undone' : filter === 'done' ? 'Done' : 'P' + filter.charAt(1).toUpperCase())).classList.add('active');
             
             document.getElementById('filterMenu').classList.remove('show');
-            render();
+            render(true);
             if (currentView === 'table') renderTable();
         }
         
@@ -3993,7 +4004,7 @@
                 }
             });
             
-            render();
+            render(true);
             if (currentView === 'table') renderTable();
         };
 
