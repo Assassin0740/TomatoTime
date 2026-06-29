@@ -1461,6 +1461,27 @@
             box-shadow: 0 0 30px rgba(0,0,0,0.5);
             transition: transform 0.3s ease;
         }
+
+        .date-filter-btn {
+            padding: 5px 14px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .date-filter-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+        }
+        .date-filter-btn.active {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: rgba(76, 175, 80, 0.5);
+            color: #81c784;
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -1676,6 +1697,19 @@
             </div>
             
             <div id="tableView" class="table-view-container">
+                <!-- 日期范围筛选器 -->
+                <div class="table-date-filter-row" style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap;">
+                    <span style="font-size: 14px; color: #ccc; font-weight: bold; display: flex; align-items: center; gap: 5px;">📅 日期范围筛选:</span>
+                    <button id="btnThisWeek" class="date-filter-btn active" onclick="setDateFilterMode('week')">本周</button>
+                    <button id="btnCustomDate" class="date-filter-btn" onclick="setDateFilterMode('custom')">自定义</button>
+                    <div id="customDateInputs" style="display: none; align-items: center; gap: 5px;">
+                        <input type="date" id="filterStartDate" onchange="applyCustomDateFilter()" style="padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                        <span style="color: #aaa; font-size: 12px;">至</span>
+                        <input type="date" id="filterEndDate" onchange="applyCustomDateFilter()" style="padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                    </div>
+                    <span id="dateRangeDisplay" style="font-size: 12px; color: #888; margin-left: auto;"></span>
+                </div>
+                
                 <table class="task-table">
                     <thead>
                         <tr>
@@ -2140,6 +2174,7 @@
         function saveArchive() {
             localStorage.setItem('archived_notes', JSON.stringify(archivedNotes));
             renderArchiveHistory();
+            if (currentView === 'table') renderTable();
         }
 
         function render() {
@@ -2382,20 +2417,49 @@
                     imgs[i].title = '点击放大图片';
                 }
                 bodyContent = tempDiv.innerHTML;
+
+                let commentsHtml = '';
+                if (n.comments && n.comments.length > 0) {
+                    commentsHtml = `<div class="comments-section" style="margin-top: 10px;">
+                        ${n.comments.map((c, ci) => `
+                            <div class="single-comment">
+                                <span class="comment-text">${renderCommentText(c.text)}</span>
+                                <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci})">✕</span>
+                            </div>
+                        `).join('')}
+                    </div>`;
+                }
                 
                 html += `
-                    <div class="archive-item">
-                        <div class="archive-item-left">
-                            <div class="archive-item-content">${bodyContent}</div>
-                            <div class="archive-item-meta">
-                                <span class="archive-time-tag">✓ 完成时间: ${timeStr}</span>
-                                <span style="background:${pColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${pText}</span>
-                                <span style="background:${typeColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${typeText}</span>
+                    <div class="archive-item" style="flex-direction: column; align-items: stretch; gap: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
+                            <div class="archive-item-left">
+                                <div class="archive-item-content">${bodyContent}</div>
+                                <div class="archive-item-meta">
+                                    <span class="archive-time-tag">✓ 完成时间: ${timeStr}</span>
+                                    <span style="background:${pColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${pText}</span>
+                                    <span style="background:${typeColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${typeText}</span>
+                                </div>
+                            </div>
+                            <div class="archive-item-right" style="flex-shrink: 0;">
+                                <button class="archive-btn-recover" onclick="toggleComment(${n.id})" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #ccc;">评论</button>
+                                <button class="archive-btn-recover" onclick="recoverArchive(${n.id})">恢复</button>
+                                <button class="archive-btn-delete" onclick="deleteArchive(${n.id})">删除</button>
                             </div>
                         </div>
-                        <div class="archive-item-right">
-                            <button class="archive-btn-recover" onclick="recoverArchive(${n.id})">恢复</button>
-                            <button class="archive-btn-delete" onclick="deleteArchive(${n.id})">删除</button>
+                        
+                        ${commentsHtml}
+                        
+                        <div class="comment-input-area" id="commentArea_${n.id}" style="display:none; width: 100%;">
+                            <div class="comment-input-wrapper" style="flex: 1;">
+                                <div class="comment-input" id="c_${n.id}" contenteditable="true" data-placeholder="添加批注…" onkeydown="handleCommentKeydown(event, ${n.id})"></div>
+                            </div>
+                            <button class="emoji-toggle" onclick="toggleEmojiPanel(${n.id})">表情包</button>
+                            <button class="send-btn" onclick="addComment(${n.id})">发送</button>
+                        </div>
+                        <div class="emoji-panel" id="emoji_${n.id}">
+                            <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
+                            ${memeImages.map(img => `<img class="emoji" src="表情包/${img}" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
                         </div>
                     </div>
                 `;
@@ -2649,58 +2713,72 @@
             }
         };
 
+        function getTaskAndSave(id, modifierFn) {
+            let found = notes.find(x => x.id === id);
+            if (found) {
+                modifierFn(found);
+                save();
+                return;
+            }
+            found = archivedNotes.find(x => x.id === id);
+            if (found) {
+                modifierFn(found);
+                saveArchive();
+            }
+        }
+
         window.togglePriority = id => {
-            const n = notes.find(x => x.id === id);
-            if (n.p === 1) n.p = 2;
-            else if (n.p === 2) n.p = 3;
-            else n.p = 1;
-            save();
+            getTaskAndSave(id, n => {
+                if (n.p === 1) n.p = 2;
+                else if (n.p === 2) n.p = 3;
+                else n.p = 1;
+            });
         };
 
         window.toggleType = id => {
-            const n = notes.find(x => x.id === id);
-            n.type = n.type === 'short' ? 'long' : 'short';
-            save();
+            getTaskAndSave(id, n => {
+                n.type = n.type === 'short' ? 'long' : 'short';
+            });
         };
 
         window.updateNote = (id, v) => {
-            const n = notes.find(x => x.id === id);
-            n.content = v.trim();
-            save();
+            getTaskAndSave(id, n => {
+                n.content = v.trim();
+            });
         };
 
         window.addComment = id => {
-            const n = notes.find(x => x.id === id);
             const input = document.getElementById('c_' + id);
-            
             let text = '';
-            const children = input.childNodes;
-            children.forEach(child => {
-                if (child.nodeType === Node.TEXT_NODE) {
-                    text += child.textContent;
-                } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'IMG') {
-                    const src = child.src;
-                    const imgName = src.split('/').pop();
-                    text += `[img]${imgName}[/img]`;
-                }
-            });
-            
-            text = text.trim();
-            if (!text) return;
-            
-            if (!n.comments) n.comments = [];
-            n.comments.push({ text: text, time: Date.now() });
-            input.innerHTML = '';
-            input.setAttribute('data-has-content', 'false');
-            save();
+            if (input) {
+                const children = input.childNodes;
+                children.forEach(child => {
+                    if (child.nodeType === Node.TEXT_NODE) {
+                        text += child.textContent;
+                    } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'IMG') {
+                        const src = child.src;
+                        const imgName = src.split('/').pop();
+                        text += `[img]${imgName}[/img]`;
+                    }
+                });
+                text = text.trim();
+                if (!text) return;
+                
+                getTaskAndSave(id, n => {
+                    if (!n.comments) n.comments = [];
+                    n.comments.push({ text: text, time: Date.now() });
+                });
+                input.innerHTML = '';
+                input.setAttribute('data-has-content', 'false');
+            }
         };
 
         window.deleteComment = (noteId, commentIndex) => {
-            const n = notes.find(x => x.id === noteId);
-            if (n && n.comments) {
-                n.comments.splice(commentIndex, 1);
-                save();
-            }
+            getTaskAndSave(noteId, n => {
+                if (n.comments) {
+                    n.comments.splice(commentIndex, 1);
+                }
+            });
         };
 
         window.toggleComment = (noteId) => {
@@ -3725,20 +3803,23 @@
             currentView = viewType;
             localStorage.setItem('currentView', viewType);
             
-            const cardBtn = document.querySelector('.view-toggle-btn:first-child');
-            const tableBtn = document.querySelector('.view-toggle-btn:last-child');
+            const cardBtn = document.querySelector('.view-toggle-btn[onclick*="card"]');
+            const tableBtn = document.querySelector('.view-toggle-btn[onclick*="table"]');
             const notesList = document.getElementById('notesList');
             const tableView = document.getElementById('tableView');
+            const archiveContainer = document.getElementById('archiveContainer');
             
             if (viewType === 'card') {
-                cardBtn.classList.add('active');
-                tableBtn.classList.remove('active');
+                if (cardBtn) cardBtn.classList.add('active');
+                if (tableBtn) tableBtn.classList.remove('active');
                 notesList.style.display = 'block';
+                if (archiveContainer) archiveContainer.style.display = 'block';
                 tableView.classList.remove('active');
             } else {
-                cardBtn.classList.remove('active');
-                tableBtn.classList.add('active');
+                if (cardBtn) cardBtn.classList.remove('active');
+                if (tableBtn) tableBtn.classList.add('active');
                 notesList.style.display = 'none';
+                if (archiveContainer) archiveContainer.style.display = 'none';
                 tableView.classList.add('active');
                 renderTable();
             }
@@ -3771,14 +3852,16 @@
         if (savedView === 'table') {
             // 直接设置初始状态，避免调用toggleView可能带来的问题
             currentView = 'table';
-            const cardBtn = document.querySelector('.view-toggle-btn:first-child');
-            const tableBtn = document.querySelector('.view-toggle-btn:last-child');
+            const cardBtn = document.querySelector('.view-toggle-btn[onclick*="card"]');
+            const tableBtn = document.querySelector('.view-toggle-btn[onclick*="table"]');
             const notesList = document.getElementById('notesList');
             const tableView = document.getElementById('tableView');
+            const archiveContainer = document.getElementById('archiveContainer');
             
-            cardBtn.classList.remove('active');
-            tableBtn.classList.add('active');
+            if (cardBtn) cardBtn.classList.remove('active');
+            if (tableBtn) tableBtn.classList.add('active');
             notesList.style.display = 'none';
+            if (archiveContainer) archiveContainer.style.display = 'none';
             tableView.classList.add('active');
             renderTable();
         }
@@ -3799,10 +3882,122 @@
             });
         }
 
+        let dateFilterMode = 'week'; // 'week' or 'custom'
+        
+        function getThisWeekRange() {
+            const now = new Date();
+            const day = now.getDay(); // 0 is Sunday, 1-6 is Mon-Sat
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            
+            const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+            monday.setHours(0, 0, 0, 0);
+            
+            const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+            sunday.setHours(23, 59, 59, 999);
+            
+            return { start: monday.getTime(), end: sunday.getTime() };
+        }
+
+        function formatSimpleDate(timestamp) {
+            const d = new Date(timestamp);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        window.setDateFilterMode = (mode) => {
+            dateFilterMode = mode;
+            const btnWeek = document.getElementById('btnThisWeek');
+            const btnCustom = document.getElementById('btnCustomDate');
+            const customInputs = document.getElementById('customDateInputs');
+            
+            if (mode === 'week') {
+                if (btnWeek) btnWeek.classList.add('active');
+                if (btnCustom) btnCustom.classList.remove('active');
+                if (customInputs) customInputs.style.display = 'none';
+            } else {
+                if (btnWeek) btnWeek.classList.remove('active');
+                if (btnCustom) btnCustom.classList.add('active');
+                if (customInputs) customInputs.style.display = 'flex';
+                
+                // 默认初始化输入框
+                const startInput = document.getElementById('filterStartDate');
+                const endInput = document.getElementById('filterEndDate');
+                if (startInput && endInput && (!startInput.value || !endInput.value)) {
+                    const range = getThisWeekRange();
+                    startInput.value = formatSimpleDate(range.start);
+                    endInput.value = formatSimpleDate(range.end);
+                }
+            }
+            updateDateRangeDisplay();
+            renderTable();
+        };
+
+        window.applyCustomDateFilter = () => {
+            updateDateRangeDisplay();
+            renderTable();
+        };
+
+        function updateDateRangeDisplay() {
+            const display = document.getElementById('dateRangeDisplay');
+            if (!display) return;
+            if (dateFilterMode === 'week') {
+                const range = getThisWeekRange();
+                display.textContent = `本周范围: ${formatSimpleDate(range.start)} 至 ${formatSimpleDate(range.end)}`;
+            } else {
+                const startVal = document.getElementById('filterStartDate').value;
+                const endVal = document.getElementById('filterEndDate').value;
+                if (startVal && endVal) {
+                    display.textContent = `当前范围: ${startVal} 至 ${endVal}`;
+                } else {
+                    display.textContent = '请选择完整的起止日期';
+                }
+            }
+        }
+
         function renderTable() {
             const tbody = document.getElementById('tableBody');
+            if (!tbody) return;
             
-            let filtered = [...notes];
+            let startTs = 0;
+            let endTs = 0;
+            if (dateFilterMode === 'week') {
+                const r = getThisWeekRange();
+                startTs = r.start;
+                endTs = r.end;
+            } else {
+                const startVal = document.getElementById('filterStartDate').value;
+                const endVal = document.getElementById('filterEndDate').value;
+                if (startVal && endVal) {
+                    startTs = new Date(startVal + 'T00:00:00').getTime();
+                    endTs = new Date(endVal + 'T23:59:59').getTime();
+                } else {
+                    const r = getThisWeekRange();
+                    startTs = r.start;
+                    endTs = r.end;
+                }
+            }
+
+            // 合并过滤数据：未完成任务始终可见，已完成任务按日期筛选
+            let tableTasks = [];
+            
+            notes.forEach(n => {
+                if (!n.done) {
+                    tableTasks.push(n);
+                } else {
+                    const doneT = n.doneTime || n.ts || Date.now();
+                    if (doneT >= startTs && doneT <= endTs) {
+                        tableTasks.push(n);
+                    }
+                }
+            });
+            
+            archivedNotes.forEach(n => {
+                const doneT = n.doneTime || n.ts || Date.now();
+                if (doneT >= startTs && doneT <= endTs) {
+                    tableTasks.push(n);
+                }
+            });
+
+            let filtered = [...tableTasks];
             
             if (currentFilter === 'undone') filtered = filtered.filter(x => !x.done);
             if (currentFilter === 'done') filtered = filtered.filter(x => x.done);
@@ -3819,7 +4014,7 @@
                 const aDone = a.done ? 1 : 0;
                 const bDone = b.done ? 1 : 0;
                 if (aDone !== bDone) {
-                    return aDone - bDone; // 未完成的在前面
+                    return aDone - bDone;
                 }
                 
                 // 2. 再按优先级排序
@@ -3847,7 +4042,6 @@
             }
             
             tbody.innerHTML = filtered.map(n => {
-                // 给没有type字段的旧数据设置默认值
                 if (!n.type) n.type = 'short';
                 
                 const pColor = n.p === 1 ? '#4CAF50' : n.p === 2 ? '#FF9800' : '#f44336';
@@ -3856,34 +4050,96 @@
                 const doneText = n.done ? '已完成' : '未完成';
                 const typeColor = n.type === 'short' ? '#2196F3' : '#9C27B0';
                 const typeText = n.type === 'short' ? '短期' : '长期';
+
+                // 批注/评论展示
+                let commentsHtml = '';
+                if (n.comments && n.comments.length > 0) {
+                    commentsHtml = `
+                        <div class="comments-section" style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px;">
+                            ${n.comments.map((c, ci) => `
+                                <div class="single-comment" style="font-size: 11px; background: rgba(255,255,255,0.03); margin-bottom: 4px; padding: 3px 6px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                                    <span class="comment-text" style="color: #aaa; text-align: left;">${renderCommentText(c.text)}</span>
+                                    <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci}); renderTable();" style="cursor: pointer; color: #ef5350; margin-left: 8px; font-weight: bold;">✕</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+
+                // 快捷评论框
+                let commentInputHtml = `
+                    <div class="comment-input-area" id="tableCommentArea_${n.id}" style="display:none; margin-top:8px; padding:6px; background:rgba(0,0,0,0.25); border-radius:6px; border: 1px solid rgba(255,255,255,0.05);">
+                        <div class="comment-input-wrapper" style="margin-bottom: 5px;">
+                            <div class="comment-input" id="tc_${n.id}" contenteditable="true" data-placeholder="添加批注…" onkeydown="handleTableCommentKeydown(event, ${n.id})" style="min-height: 24px; font-size:12px; color:#fff; outline:none; text-align: left; background:transparent;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: flex-end; gap: 5px;">
+                            <button onclick="addTableComment(${n.id})" style="font-size:11px; padding: 3px 8px; background:#4CAF50; border:none; color:#fff; border-radius:4px; cursor:pointer;">发送</button>
+                        </div>
+                    </div>
+                `;
                 
                 return `
                     <tr data-note-id="${n.id}">
-                        <td class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容">${n.content}</td>
-                        <td><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
-                        <td><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
-                        <td><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
-                        <td style="font-size:12px;color:#888;">${formatDate(n.ts)}</td>
-                        <td>
-                            <button onclick="toggleDone(${n.id});renderTable();" style="background:rgba(76,175,80,0.2);border:none;color:#81c784;padding:5px 10px;border-radius:4px;cursor:pointer;margin-right:5px;">${n.done ? '撤销' : '完成'}</button>
-                            <button onclick="deleteNote(${n.id});renderTable();" style="background:rgba(244,67,54,0.2);border:none;color:#ef5350;padding:5px 10px;border-radius:4px;cursor:pointer;">删除</button>
+                        <td style="text-align: left; vertical-align: top; max-width: 350px;">
+                            <div class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容" style="outline: none; color: #fff; line-height: 1.5; word-break: break-all;">${n.content}</div>
+                            ${commentsHtml}
+                            ${commentInputHtml}
+                        </td>
+                        <td style="vertical-align: middle;"><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
+                        <td style="vertical-align: middle;"><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
+                        <td style="vertical-align: middle;"><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
+                        <td style="font-size:12px;color:#888;vertical-align: middle;">${formatDate(n.ts)}</td>
+                        <td style="vertical-align: middle; white-space: nowrap;">
+                            <button onclick="toggleTableComment(${n.id})" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1); color:#ccc; padding:5px 8px; border-radius:4px; cursor:pointer; margin-right:5px;">💬评论</button>
+                            <button onclick="toggleDone(${n.id});renderTable();" style="background:rgba(76,175,80,0.2);border:none;color:#81c784;padding:5px 8px;border-radius:4px;cursor:pointer;margin-right:5px;">${n.done ? '撤销' : '完成'}</button>
+                            <button onclick="deleteNote(${n.id});renderTable();" style="background:rgba(244,67,54,0.2);border:none;color:#ef5350;padding:5px 8px;border-radius:4px;cursor:pointer;">删除</button>
                         </td>
                     </tr>
                 `;
             }).join('');
         }
 
+        window.toggleTableComment = (id) => {
+            const area = document.getElementById(`tableCommentArea_${id}`);
+            if (area) {
+                area.style.display = area.style.display === 'none' ? 'block' : 'none';
+                if (area.style.display === 'block') {
+                    const input = document.getElementById(`tc_${id}`);
+                    if (input) input.focus();
+                }
+            }
+        };
+
+        window.handleTableCommentKeydown = (e, id) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                addTableComment(id);
+            }
+        };
+
+        window.addTableComment = (id) => {
+            const input = document.getElementById(`tc_${id}`);
+            if (!input) return;
+            const text = input.textContent.trim();
+            if (!text) return;
+            
+            getTaskAndSave(id, n => {
+                if (!n.comments) n.comments = [];
+                n.comments.push({ text: text, time: Date.now() });
+            });
+            
+            renderTable();
+        };
+
         window.updateTableNote = (noteId, element) => {
-            const n = notes.find(x => x.id === noteId);
-            if (n) {
+            getTaskAndSave(noteId, n => {
                 const newContent = element.innerHTML.trim();
                 if (newContent && newContent !== n.content) {
                     n.content = newContent;
-                    save();
                 } else if (!newContent) {
                     element.innerHTML = n.content;
                 }
-            }
+            });
         };
 
         const bgFileInput = document.getElementById('bgFileInput');
