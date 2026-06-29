@@ -2078,6 +2078,7 @@
         // 先初始化视图和类型相关的状态变量
         let currentView = localStorage.getItem('currentView') || 'card';
         let currentTypeView = localStorage.getItem('currentTypeView') || 'all';
+        let currentFilter = localStorage.getItem('currentFilter') || 'all';
         let currentType = 'short'; // 默认短期
 
         let isDragOver = false;
@@ -2216,6 +2217,18 @@
 
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
         let archivedNotes = JSON.parse(localStorage.getItem('archived_notes')) || [];
+
+        let sortDirections = {
+            time: 'asc',
+            priority: 'asc',
+            done: 'asc'
+        };
+        const savedSortDirections = localStorage.getItem('sortDirections');
+        if (savedSortDirections) {
+            try {
+                sortDirections = JSON.parse(savedSortDirections);
+            } catch(e) {}
+        }
 
         // 给旧笔记添加默认type字段
         let needsSave = false;
@@ -3336,7 +3349,6 @@
             }
         };
         let currentSort = 'time_asc';
-        let currentFilter = 'all';
         
         let sortBy = 'time';
         let sortOrder = 'asc';
@@ -3353,21 +3365,7 @@
             }
         });
         
-        // 存储每个排序字段的方向
-        let sortDirections = {
-            time: 'asc',
-            priority: 'asc',
-            done: 'asc'
-        };
-        
-        // 加载保存的排序方向
-        const savedSortDirections = localStorage.getItem('sortDirections');
-        if (savedSortDirections) {
-            try {
-                sortDirections = JSON.parse(savedSortDirections);
-            } catch(e) {}
-        }
-        
+
         function toggleSort(field) {
             // 切换当前字段的排序方向
             sortDirections[field] = sortDirections[field] === 'asc' ? 'desc' : 'asc';
