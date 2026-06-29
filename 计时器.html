@@ -1701,6 +1701,7 @@
                 <div class="table-date-filter-row" style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap;">
                     <span style="font-size: 14px; color: #ccc; font-weight: bold; display: flex; align-items: center; gap: 5px;">📅 日期范围筛选:</span>
                     <button id="btnThisWeek" class="date-filter-btn active" onclick="setDateFilterMode('week')">本周</button>
+                    <button id="btnAllTime" class="date-filter-btn" onclick="setDateFilterMode('all')">全部时间</button>
                     <button id="btnCustomDate" class="date-filter-btn" onclick="setDateFilterMode('custom')">自定义</button>
                     <div id="customDateInputs" style="display: none; align-items: center; gap: 5px;">
                         <input type="date" id="filterStartDate" onchange="applyCustomDateFilter()" style="padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
@@ -2138,6 +2139,81 @@
             r.readAsText(file);
         });
 
+        // 懒加载图片观察器
+        let lazyImageObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const img = entry.target;
+                if (entry.isIntersecting) {
+                    if (img.dataset.src && img.src !== img.dataset.src) {
+                        img.src = img.dataset.src;
+                    }
+                } else {
+                    if (img.src && img.src.startsWith('data:image')) {
+                        img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+                    }
+                }
+            });
+        }, {
+            rootMargin: "200px 0px 200px 0px"
+        });
+
+        function bindLazyImages() {
+            document.querySelectorAll('.lazy-img').forEach(img => {
+                lazyImageObserver.observe(img);
+            });
+        }
+
+        // 懒加载 HTML 中的图片
+        function lazyloadifyHtml(htmlContent) {
+            if (!htmlContent) return '';
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlContent;
+            const imgs = tempDiv.getElementsByTagName('img');
+            for (let i = 0; i < imgs.length; i++) {
+                const img = imgs[i];
+                const src = img.src || img.getAttribute('src');
+                if (src && !src.startsWith('data:image/svg+xml')) {
+                    img.setAttribute('data-src', src);
+                    img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+                    img.classList.add('lazy-img');
+                }
+            }
+            return tempDiv.innerHTML;
+        }
+
+        // 卡片分页加载状态
+        let cardRenderLimit = 15;
+        let archiveRenderLimits = {}; // 格式为 { '2026-06-29': 15 }
+
+        // 列表滚动加载哨兵观察器
+        let sentinelObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const sentinel = entry.target;
+                    if (sentinel.id === 'notesListSentinel') {
+                        cardRenderLimit += 15;
+                        render();
+                    } else if (sentinel.id.startsWith('archive_sentinel_')) {
+                        const dateStr = sentinel.dataset.date;
+                        if (!archiveRenderLimits[dateStr]) archiveRenderLimits[dateStr] = 15;
+                        archiveRenderLimits[dateStr] += 15;
+                        renderArchiveGroupItems(dateStr);
+                    }
+                }
+            });
+        }, {
+            rootMargin: "100px"
+        });
+
+        function bindSentinelObserver() {
+            const listSentinel = document.getElementById('notesListSentinel');
+            if (listSentinel) sentinelObserver.observe(listSentinel);
+            
+            document.querySelectorAll('.archive-sentinel').forEach(sentinel => {
+                sentinelObserver.observe(sentinel);
+            });
+        }
+
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
         let archivedNotes = JSON.parse(localStorage.getItem('archived_notes')) || [];
 
@@ -2166,12 +2242,14 @@
         }
 
         function save() { 
+            cardRenderLimit = 15;
             localStorage.setItem('notes', JSON.stringify(notes)); 
             render(); 
             if (currentView === 'table') renderTable();
         }
 
         function saveArchive() {
+            archiveRenderLimits = {};
             localStorage.setItem('archived_notes', JSON.stringify(archivedNotes));
             renderArchiveHistory();
             if (currentView === 'table') renderTable();
@@ -2179,11 +2257,20 @@
 
         function render() {
             const list = document.getElementById('notesList');
+            if (!list) return;
             list.innerHTML = '';
 
-            let filtered = [...notes];
+            let listTasks = [];
+            if (currentFilter === 'all') {
+                listTasks = [...notes, ...archivedNotes];
+            } else if (currentFilter === 'done') {
+                listTasks = [...notes.filter(x => x.done), ...archivedNotes];
+            } else {
+                listTasks = [...notes];
+            }
+
+            let filtered = [...listTasks];
             if (currentFilter === 'undone') filtered = filtered.filter(x => !x.done);
-            if (currentFilter === 'done') filtered = filtered.filter(x => x.done);
             if (currentFilter === 'p3') filtered = filtered.filter(x => x.p === 3);
             if (currentFilter === 'p2') filtered = filtered.filter(x => x.p === 2);
             if (currentFilter === 'p1') filtered = filtered.filter(x => x.p === 1);
@@ -2197,7 +2284,7 @@
                 const aDone = a.done ? 1 : 0;
                 const bDone = b.done ? 1 : 0;
                 if (aDone !== bDone) {
-                    return aDone - bDone; // 未完成的在前面
+                    return aDone - bDone;
                 }
                 
                 // 2. 再按优先级排序
@@ -2219,14 +2306,16 @@
                 }
             });
 
-            filtered.forEach(n => {
+            // 分页/滚动追加懒渲染：截取前 cardRenderLimit 条
+            const toRender = filtered.slice(0, cardRenderLimit);
+
+            toRender.forEach(n => {
                 const card = document.createElement('div');
                 card.className = 'note-card';
                 const pColor = n.p === 1 ? '#22cc88' : n.p === 2 ? '#ffcc00' : '#ff4444';
                 const typeColor = n.type === 'short' ? '#2196F3' : '#9C27B0';
                 const typeText = n.type === 'short' ? '短期' : '长期';
                 
-                // 给没有type字段的旧数据设置默认值
                 if (!n.type) n.type = 'short';
 
                 let commentsHtml = '';
@@ -2234,16 +2323,19 @@
                     commentsHtml = `<div class="comments-section">
                         ${n.comments.map((c, ci) => `
                             <div class="single-comment">
-                                <span class="comment-text">${renderCommentText(c.text)}</span>
+                                <span class="comment-text">${lazyloadifyHtml(renderCommentText(c.text))}</span>
                                 <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci})">✕</span>
                             </div>
                         `).join('')}
                     </div>`;
                 }
 
+                // 处理大图和表情懒加载，将 content 处理为 data-src 格式
+                const contentHtml = lazyloadifyHtml(n.content);
+
                 card.innerHTML = `
                     <div class="note-date">${formatDate(n.ts)}</div>
-                    <div class="note-content-editable" contenteditable="true" data-note-id="${n.id}" onblur="handleNoteBlur(this)" onkeydown="handleNoteKeydown(event)">${n.content}</div>
+                    <div class="note-content-editable" contenteditable="true" data-note-id="${n.id}" onblur="handleNoteBlur(this)" onkeydown="handleNoteKeydown(event)">${contentHtml}</div>
                     <div class="note-footer">
                         <div>
                             <span class="priority-tag" style="background:${pColor};color:#fff;cursor:pointer" onclick="togglePriority(${n.id})" title="点击切换优先级">${n.p === 1 ? '低' : n.p === 2 ? '中' : '高'}</span>
@@ -2266,11 +2358,24 @@
                     </div>
                     <div class="emoji-panel" id="emoji_${n.id}">
                         <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
-                        ${memeImages.map(img => `<img class="emoji" src="表情包/${img}" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
+                        ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
                     </div>
                 `;
                 list.appendChild(card);
             });
+
+            // 滚动加载哨兵机制
+            if (filtered.length > cardRenderLimit) {
+                const sentinel = document.createElement('div');
+                sentinel.id = 'notesListSentinel';
+                sentinel.style.cssText = 'height: 40px; line-height: 40px; margin: 15px 0; text-align: center; color: #888; font-size: 13px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05); cursor: pointer;';
+                sentinel.textContent = `向下滚动加载更多历史任务 (已展示 ${cardRenderLimit}/${filtered.length})`;
+                list.appendChild(sentinel);
+            }
+
+            // 重新绑定观察器
+            bindLazyImages();
+            bindSentinelObserver();
         }
 
         function escapeHtml(text) {
@@ -2396,8 +2501,11 @@
             
             groupNotes.sort((a, b) => (b.doneTime || b.ts || 0) - (a.doneTime || a.ts || 0));
             
+            const limit = archiveRenderLimits[dateStr] || 15;
+            const toRender = groupNotes.slice(0, limit);
+
             let html = '';
-            groupNotes.forEach(n => {
+            toRender.forEach(n => {
                 const doneDate = new Date(n.doneTime || n.ts || Date.now());
                 const timeStr = `${String(doneDate.getHours()).padStart(2, '0')}:${String(doneDate.getMinutes()).padStart(2, '0')}:${String(doneDate.getSeconds()).padStart(2, '0')}`;
                 
@@ -2412,18 +2520,18 @@
                 tempDiv.innerHTML = bodyContent;
                 const imgs = tempDiv.getElementsByTagName('img');
                 for (let i = 0; i < imgs.length; i++) {
-                    const src = imgs[i].src;
+                    const src = imgs[i].src || imgs[i].getAttribute('src');
                     imgs[i].setAttribute('onclick', `zoomImage(event, "${src.replace(/"/g, '\\"')}")`);
                     imgs[i].title = '点击放大图片';
                 }
-                bodyContent = tempDiv.innerHTML;
+                bodyContent = lazyloadifyHtml(tempDiv.innerHTML);
 
                 let commentsHtml = '';
                 if (n.comments && n.comments.length > 0) {
                     commentsHtml = `<div class="comments-section" style="margin-top: 10px;">
                         ${n.comments.map((c, ci) => `
                             <div class="single-comment">
-                                <span class="comment-text">${renderCommentText(c.text)}</span>
+                                <span class="comment-text">${lazyloadifyHtml(renderCommentText(c.text))}</span>
                                 <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci})">✕</span>
                             </div>
                         `).join('')}
@@ -2459,13 +2567,24 @@
                         </div>
                         <div class="emoji-panel" id="emoji_${n.id}">
                             <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
-                            ${memeImages.map(img => `<img class="emoji" src="表情包/${img}" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
+                            ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
                         </div>
                     </div>
                 `;
             });
+
+            if (groupNotes.length > limit) {
+                html += `
+                    <div class="archive-sentinel" id="archive_sentinel_${dateStr}" data-date="${dateStr}" style="height: 35px; line-height: 35px; text-align: center; color: #aaa; font-size: 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px dashed rgba(255,255,255,0.05); margin-top: 10px; cursor: pointer;">
+                        向下滚动加载更多历史已完成任务 (已展示 ${limit}/${groupNotes.length})
+                    </div>
+                `;
+            }
             
             groupContent.innerHTML = html;
+
+            bindLazyImages();
+            bindSentinelObserver();
         }
         
         function getWeekday(dateStr) {
@@ -3286,6 +3405,7 @@
         document.getElementById('sortDone').onclick = () => toggleSort('done');
         
         function updateFilter(filter) {
+            cardRenderLimit = 15;
             currentFilter = filter;
             // 保存筛选状态
             localStorage.setItem('currentFilter', filter);
@@ -3800,6 +3920,8 @@
         window.toggleView = (viewType) => {
             if (currentView === viewType) return;
             
+            cardRenderLimit = 15;
+            archiveRenderLimits = {};
             currentView = viewType;
             localStorage.setItem('currentView', viewType);
             
@@ -3906,15 +4028,21 @@
         window.setDateFilterMode = (mode) => {
             dateFilterMode = mode;
             const btnWeek = document.getElementById('btnThisWeek');
+            const btnAll = document.getElementById('btnAllTime');
             const btnCustom = document.getElementById('btnCustomDate');
             const customInputs = document.getElementById('customDateInputs');
             
+            if (btnWeek) btnWeek.classList.remove('active');
+            if (btnAll) btnAll.classList.remove('active');
+            if (btnCustom) btnCustom.classList.remove('active');
+
             if (mode === 'week') {
                 if (btnWeek) btnWeek.classList.add('active');
-                if (btnCustom) btnCustom.classList.remove('active');
+                if (customInputs) customInputs.style.display = 'none';
+            } else if (mode === 'all') {
+                if (btnAll) btnAll.classList.add('active');
                 if (customInputs) customInputs.style.display = 'none';
             } else {
-                if (btnWeek) btnWeek.classList.remove('active');
                 if (btnCustom) btnCustom.classList.add('active');
                 if (customInputs) customInputs.style.display = 'flex';
                 
@@ -3942,6 +4070,8 @@
             if (dateFilterMode === 'week') {
                 const range = getThisWeekRange();
                 display.textContent = `本周范围: ${formatSimpleDate(range.start)} 至 ${formatSimpleDate(range.end)}`;
+            } else if (dateFilterMode === 'all') {
+                display.textContent = '范围: 全部历史时间';
             } else {
                 const startVal = document.getElementById('filterStartDate').value;
                 const endVal = document.getElementById('filterEndDate').value;
@@ -3963,6 +4093,9 @@
                 const r = getThisWeekRange();
                 startTs = r.start;
                 endTs = r.end;
+            } else if (dateFilterMode === 'all') {
+                startTs = 0;
+                endTs = Infinity;
             } else {
                 const startVal = document.getElementById('filterStartDate').value;
                 const endVal = document.getElementById('filterEndDate').value;
@@ -4058,7 +4191,7 @@
                         <div class="comments-section" style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px;">
                             ${n.comments.map((c, ci) => `
                                 <div class="single-comment" style="font-size: 11px; background: rgba(255,255,255,0.03); margin-bottom: 4px; padding: 3px 6px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
-                                    <span class="comment-text" style="color: #aaa; text-align: left;">${renderCommentText(c.text)}</span>
+                                    <span class="comment-text" style="color: #aaa; text-align: left;">${lazyloadifyHtml(renderCommentText(c.text))}</span>
                                     <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci}); renderTable();" style="cursor: pointer; color: #ef5350; margin-left: 8px; font-weight: bold;">✕</span>
                                 </div>
                             `).join('')}
@@ -4081,7 +4214,7 @@
                 return `
                     <tr data-note-id="${n.id}">
                         <td style="text-align: left; vertical-align: top; max-width: 350px;">
-                            <div class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容" style="outline: none; color: #fff; line-height: 1.5; word-break: break-all;">${n.content}</div>
+                            <div class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容" style="outline: none; color: #fff; line-height: 1.5; word-break: break-all;">${lazyloadifyHtml(n.content)}</div>
                             ${commentsHtml}
                             ${commentInputHtml}
                         </td>
@@ -4097,6 +4230,7 @@
                     </tr>
                 `;
             }).join('');
+            bindLazyImages();
         }
 
         window.toggleTableComment = (id) => {
