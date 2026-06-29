@@ -2079,6 +2079,26 @@
         let currentView = localStorage.getItem('currentView') || 'card';
         let currentTypeView = localStorage.getItem('currentTypeView') || 'all';
         let currentFilter = localStorage.getItem('currentFilter') || 'all';
+        let dateFilterMode = 'week'; // 'week' or 'custom'
+        
+        function getThisWeekRange() {
+            const now = new Date();
+            const day = now.getDay(); // 0 is Sunday, 1-6 is Mon-Sat
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            
+            const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+            monday.setHours(0, 0, 0, 0);
+            
+            const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+            sunday.setHours(23, 59, 59, 999);
+            
+            return { start: monday.getTime(), end: sunday.getTime() };
+        }
+
+        function formatSimpleDate(timestamp) {
+            const d = new Date(timestamp);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
         let currentType = 'short'; // 默认短期
 
         let isDragOver = false;
@@ -4000,27 +4020,6 @@
                     btn.classList.add('active');
                 }
             });
-        }
-
-        let dateFilterMode = 'week'; // 'week' or 'custom'
-        
-        function getThisWeekRange() {
-            const now = new Date();
-            const day = now.getDay(); // 0 is Sunday, 1-6 is Mon-Sat
-            const diffToMonday = day === 0 ? -6 : 1 - day;
-            
-            const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
-            monday.setHours(0, 0, 0, 0);
-            
-            const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-            sunday.setHours(23, 59, 59, 999);
-            
-            return { start: monday.getTime(), end: sunday.getTime() };
-        }
-
-        function formatSimpleDate(timestamp) {
-            const d = new Date(timestamp);
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         }
 
         window.setDateFilterMode = (mode) => {
