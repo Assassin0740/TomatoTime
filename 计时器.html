@@ -1246,6 +1246,221 @@
             border-color: rgba(76, 175, 80, 0.5);
             color: #81c784;
         }
+
+        /* 归档历史折叠面板容器 */
+        .archive-container {
+            margin-top: 30px;
+            background: rgba(30, 30, 30, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(15px);
+            transition: all 0.3s ease;
+        }
+
+        /* 归档历史主标题栏 */
+        .archive-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 10px 5px;
+            font-size: 18px;
+            font-weight: 600;
+            color: #e0e0e0;
+            user-select: none;
+            transition: color 0.2s ease;
+        }
+
+        .archive-header:hover {
+            color: #fff;
+        }
+
+        .archive-header-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .archive-header-count {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #aaa;
+        }
+
+        .archive-header-arrow {
+            transition: transform 0.3s ease;
+            font-size: 14px;
+        }
+
+        .archive-header.active .archive-header-arrow {
+            transform: rotate(90deg);
+        }
+
+        /* 按天折叠的分组 */
+        .archive-group {
+            margin-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 15px;
+        }
+
+        .archive-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            font-size: 14px;
+            color: #bbb;
+            user-select: none;
+            transition: all 0.2s ease;
+            border: 1px solid rgba(255, 255, 255, 0.02);
+        }
+
+        .archive-group-header:hover {
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+        }
+
+        .archive-group-arrow {
+            transition: transform 0.3s ease;
+        }
+
+        .archive-group-header.active .archive-group-arrow {
+            transform: rotate(90deg);
+        }
+
+        /* 归档历史的任务列表项 */
+        .archive-group-content {
+            display: none;
+            padding: 10px 5px 0 5px;
+        }
+
+        .archive-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 12px 16px;
+            background: rgba(20, 20, 20, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            margin-bottom: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .archive-item:hover {
+            background: rgba(30, 30, 30, 0.6);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .archive-item-left {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .archive-item-content {
+            color: #ddd;
+            font-size: 14px;
+            line-height: 1.5;
+            word-break: break-all;
+        }
+
+        .archive-item-content img {
+            max-width: 150px;
+            max-height: 100px;
+            object-fit: contain;
+            border-radius: 6px;
+            margin-top: 6px;
+            display: block;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .archive-item-content img:hover {
+            transform: scale(1.05);
+        }
+
+        .archive-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            flex-wrap: wrap;
+        }
+
+        .archive-time-tag {
+            color: #888;
+        }
+
+        .archive-item-right {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-left: 15px;
+        }
+
+        .archive-btn-recover {
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .archive-btn-recover:hover {
+            background: rgba(76, 175, 80, 0.3);
+            color: #fff;
+        }
+
+        .archive-btn-delete {
+            background: rgba(244, 67, 54, 0.15);
+            border: 1px solid rgba(244, 67, 54, 0.2);
+            color: #ef5350;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .archive-btn-delete:hover {
+            background: rgba(244, 67, 54, 0.3);
+            color: #fff;
+        }
+
+        /* 图片查看大图的 Modal 效果 */
+        .img-modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out;
+        }
+
+        .img-modal img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            transition: transform 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -1423,6 +1638,7 @@
                 <div class="action-buttons">
                     <button id="addNoteBtn">添加</button>
                     <button id="clearNotes">清空</button>
+                    <button id="archiveBtn" style="background: rgba(103, 58, 183, 0.25); border: 1px solid rgba(103, 58, 183, 0.4); color: #b39ddb; margin-left: 5px;">归档已完成</button>
                     <button id="exportBtn">导出</button>
                 </div>
             </div>
@@ -1439,6 +1655,20 @@
             </div>
             
             <div id="notesList"></div>
+
+            <!-- 归档历史面板 -->
+            <div class="archive-container" id="archiveContainer">
+                <div class="archive-header" id="archiveHeader" onclick="toggleArchiveMainPanel()">
+                    <div class="archive-header-title">
+                        <span>📜 已完成任务历史</span>
+                        <span class="archive-header-count" id="archiveMainCount">0</span>
+                    </div>
+                    <span class="archive-header-arrow" id="archiveMainArrow">▶</span>
+                </div>
+                <div id="archiveMainList" style="display: none;">
+                    <!-- 按天分组的归档任务列表 -->
+                </div>
+            </div>
             
             <!-- 右键菜单 -->
             <div class="context-menu" id="contextMenu">
@@ -1771,10 +2001,13 @@
 
         document.body.appendChild(importDialog);
 
-        let pendingImportData = null;
+        let pendingImportData = null; // 格式为 { notes: [], archivedNotes: [] }
 
-        function showImportDialog(data) {
-            pendingImportData = data;
+        function showImportDialog(notesData, archivedData) {
+            pendingImportData = {
+                notes: notesData,
+                archivedNotes: archivedData
+            };
             importDialog.style.display = 'flex';
         }
 
@@ -1785,8 +2018,10 @@
 
         overwriteBtn.onclick = () => {
             if (pendingImportData) {
-                notes = pendingImportData;
+                notes = pendingImportData.notes;
+                archivedNotes = pendingImportData.archivedNotes;
                 save();
+                saveArchive();
                 alert('覆盖成功！');
             }
             hideImportDialog();
@@ -1794,8 +2029,10 @@
 
         mergeBtn.onclick = () => {
             if (pendingImportData) {
-                notes = notes.concat(pendingImportData);
+                notes = notes.concat(pendingImportData.notes);
+                archivedNotes = archivedNotes.concat(pendingImportData.archivedNotes);
                 save();
+                saveArchive();
                 alert('合并成功！');
             }
             hideImportDialog();
@@ -1846,12 +2083,20 @@
             r.onload = e => {
                 try {
                     const data = JSON.parse(e.target.result);
-                    if (!Array.isArray(data)) {
+                    let importNotes = [];
+                    let importArchived = [];
+                    
+                    if (Array.isArray(data)) {
+                        importNotes = data;
+                    } else if (data && typeof data === 'object') {
+                        importNotes = data.notes || [];
+                        importArchived = data.archived_notes || [];
+                    } else {
                         alert('无效的笔记数据格式');
                         return;
                     }
                     
-                    showImportDialog(data);
+                    showImportDialog(importNotes, importArchived);
                 } catch (err) {
                     alert('导入失败：' + err.message);
                 }
@@ -1860,19 +2105,42 @@
         });
 
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
-        let needsSave = false;
+        let archivedNotes = JSON.parse(localStorage.getItem('archived_notes')) || [];
+
         // 给旧笔记添加默认type字段
+        let needsSave = false;
         notes.forEach(note => {
             if (!note.type) {
                 note.type = 'short';
                 needsSave = true;
             }
         });
-        // 如果修改了旧笔记数据，保存回localStorage
         if (needsSave) {
             localStorage.setItem('notes', JSON.stringify(notes));
         }
-        function save() { localStorage.setItem('notes', JSON.stringify(notes)); render(); }
+
+        // 软件启动时，自动将活跃笔记中已完成的任务移入归档
+        const completedInNotes = notes.filter(n => n.done);
+        if (completedInNotes.length > 0) {
+            completedInNotes.forEach(n => {
+                if (!n.doneTime) n.doneTime = n.ts || Date.now();
+                archivedNotes.push(n);
+            });
+            notes = notes.filter(n => !n.done);
+            localStorage.setItem('notes', JSON.stringify(notes));
+            localStorage.setItem('archived_notes', JSON.stringify(archivedNotes));
+        }
+
+        function save() { 
+            localStorage.setItem('notes', JSON.stringify(notes)); 
+            render(); 
+            if (currentView === 'table') renderTable();
+        }
+
+        function saveArchive() {
+            localStorage.setItem('archived_notes', JSON.stringify(archivedNotes));
+            renderArchiveHistory();
+        }
 
         function render() {
             const list = document.getElementById('notesList');
@@ -1975,6 +2243,215 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        let isArchiveExpanded = false;
+        let expandedArchiveGroups = {}; // 存储按天展开的日期 key，格式为 { '2026-06-29': true }
+
+        window.toggleArchiveMainPanel = () => {
+            isArchiveExpanded = !isArchiveExpanded;
+            const mainList = document.getElementById('archiveMainList');
+            const arrow = document.getElementById('archiveMainArrow');
+            const header = document.getElementById('archiveHeader');
+            if (isArchiveExpanded) {
+                mainList.style.display = 'block';
+                arrow.textContent = '▼';
+                header.classList.add('active');
+                renderArchiveHistory();
+            } else {
+                mainList.style.display = 'none';
+                arrow.textContent = '▶';
+                header.classList.remove('active');
+            }
+        };
+
+        window.toggleArchiveGroup = dateStr => {
+            expandedArchiveGroups[dateStr] = !expandedArchiveGroups[dateStr];
+            const groupContent = document.getElementById(`archive_group_${dateStr}`);
+            const arrow = document.getElementById(`archive_group_arrow_${dateStr}`);
+            const header = document.getElementById(`archive_group_header_${dateStr}`);
+            if (expandedArchiveGroups[dateStr]) {
+                groupContent.style.display = 'block';
+                arrow.textContent = '▼';
+                header.classList.add('active');
+                renderArchiveGroupItems(dateStr);
+            } else {
+                groupContent.style.display = 'none';
+                arrow.textContent = '▶';
+                header.classList.remove('active');
+            }
+        };
+
+        function renderArchiveHistory() {
+            const mainList = document.getElementById('archiveMainList');
+            const mainCount = document.getElementById('archiveMainCount');
+            
+            mainCount.textContent = archivedNotes.length;
+            
+            if (!isArchiveExpanded) return;
+            
+            if (archivedNotes.length === 0) {
+                mainList.innerHTML = '<div style="text-align: center; color: #888; padding: 20px; font-size: 14px;">暂无归档历史</div>';
+                return;
+            }
+            
+            // 按天分组
+            const groups = {};
+            archivedNotes.forEach(n => {
+                const d = new Date(n.doneTime || n.ts || Date.now());
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                if (!groups[dateStr]) {
+                    groups[dateStr] = [];
+                }
+                groups[dateStr].push(n);
+            });
+            
+            // 排序日期
+            const sortedDates = Object.keys(groups).sort((a, b) => new Date(b) - new Date(a));
+            
+            let html = '';
+            html += `<div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                <button class="archive-btn-delete" style="font-size: 12px; padding: 5px 12px;" onclick="clearArchiveHistory(event)">清空所有归档</button>
+            </div>`;
+
+            sortedDates.forEach(dateStr => {
+                const count = groups[dateStr].length;
+                const weekday = getWeekday(dateStr);
+                const isGroupExpanded = !!expandedArchiveGroups[dateStr];
+                const arrow = isGroupExpanded ? '▼' : '▶';
+                const activeClass = isGroupExpanded ? 'active' : '';
+                const displayStyle = isGroupExpanded ? 'block' : 'none';
+                
+                html += `
+                    <div class="archive-group">
+                        <div class="archive-group-header ${activeClass}" id="archive_group_header_${dateStr}" onclick="toggleArchiveGroup('${dateStr}')">
+                            <span>📅 ${dateStr} (${weekday})</span>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="archive-header-count">${count} 个任务</span>
+                                <span class="archive-group-arrow" id="archive_group_arrow_${dateStr}">${arrow}</span>
+                            </div>
+                        </div>
+                        <div class="archive-group-content" id="archive_group_${dateStr}" style="display: ${displayStyle};">
+                            <!-- 具体任务延迟到展开时渲染 -->
+                        </div>
+                    </div>
+                `;
+            });
+            
+            mainList.innerHTML = html;
+            
+            // 如果有些组之前是展开的，重新把它们的内容画一下
+            sortedDates.forEach(dateStr => {
+                if (expandedArchiveGroups[dateStr]) {
+                    renderArchiveGroupItems(dateStr, groups[dateStr]);
+                }
+            });
+        }
+
+        function renderArchiveGroupItems(dateStr, groupNotes) {
+            const groupContent = document.getElementById(`archive_group_${dateStr}`);
+            if (!groupContent) return;
+            
+            if (!groupNotes) {
+                groupNotes = archivedNotes.filter(n => {
+                    const d = new Date(n.doneTime || n.ts || Date.now());
+                    const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    return dStr === dateStr;
+                });
+            }
+            
+            groupNotes.sort((a, b) => (b.doneTime || b.ts || 0) - (a.doneTime || a.ts || 0));
+            
+            let html = '';
+            groupNotes.forEach(n => {
+                const doneDate = new Date(n.doneTime || n.ts || Date.now());
+                const timeStr = `${String(doneDate.getHours()).padStart(2, '0')}:${String(doneDate.getMinutes()).padStart(2, '0')}:${String(doneDate.getSeconds()).padStart(2, '0')}`;
+                
+                const pColor = n.p === 1 ? '#22cc88' : n.p === 2 ? '#ffcc00' : '#ff4444';
+                const pText = n.p === 1 ? '低' : n.p === 2 ? '中' : '高';
+                
+                const typeColor = n.type === 'long' ? '#9C27B0' : '#2196F3';
+                const typeText = n.type === 'long' ? '长期' : '短期';
+                
+                let bodyContent = n.content;
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = bodyContent;
+                const imgs = tempDiv.getElementsByTagName('img');
+                for (let i = 0; i < imgs.length; i++) {
+                    const src = imgs[i].src;
+                    imgs[i].setAttribute('onclick', `zoomImage(event, "${src.replace(/"/g, '\\"')}")`);
+                    imgs[i].title = '点击放大图片';
+                }
+                bodyContent = tempDiv.innerHTML;
+                
+                html += `
+                    <div class="archive-item">
+                        <div class="archive-item-left">
+                            <div class="archive-item-content">${bodyContent}</div>
+                            <div class="archive-item-meta">
+                                <span class="archive-time-tag">✓ 完成时间: ${timeStr}</span>
+                                <span style="background:${pColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${pText}</span>
+                                <span style="background:${typeColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px;">${typeText}</span>
+                            </div>
+                        </div>
+                        <div class="archive-item-right">
+                            <button class="archive-btn-recover" onclick="recoverArchive(${n.id})">恢复</button>
+                            <button class="archive-btn-delete" onclick="deleteArchive(${n.id})">删除</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            groupContent.innerHTML = html;
+        }
+        
+        function getWeekday(dateStr) {
+            const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            const d = new Date(dateStr);
+            return weekdays[d.getDay()];
+        }
+
+        window.zoomImage = (e, src) => {
+            e.stopPropagation();
+            const modal = document.getElementById('imgModal');
+            const modalImg = document.getElementById('modalImg');
+            modalImg.src = src;
+            modal.style.display = 'flex';
+        };
+        
+        window.closeImgModal = () => {
+            const modal = document.getElementById('imgModal');
+            modal.style.display = 'none';
+        };
+
+        window.recoverArchive = id => {
+            const idx = archivedNotes.findIndex(n => n.id === id);
+            if (idx !== -1) {
+                const note = archivedNotes.splice(idx, 1)[0];
+                note.done = false;
+                delete note.doneTime;
+                notes.push(note);
+                save();
+                saveArchive();
+            }
+        };
+
+        window.deleteArchive = id => {
+            if (confirm('确定要彻底删除该归档任务吗？不可恢复！')) {
+                const idx = archivedNotes.findIndex(n => n.id === id);
+                if (idx !== -1) {
+                    archivedNotes.splice(idx, 1);
+                    saveArchive();
+                }
+            }
+        };
+
+        window.clearArchiveHistory = e => {
+            if (e) e.stopPropagation();
+            if (confirm('确定要清空所有已归档的历史任务吗？这将彻底删除所有历史记录，不可恢复！')) {
+                archivedNotes = [];
+                saveArchive();
+            }
+        };
 
         // 右键菜单和图片粘贴功能
         let currentEditableElement = null;
@@ -2161,8 +2638,15 @@
 
         window.toggleDone = id => {
             const n = notes.find(x => x.id === id);
-            n.done = !n.done;
-            save();
+            if (n) {
+                n.done = !n.done;
+                if (n.done) {
+                    n.doneTime = Date.now();
+                } else {
+                    delete n.doneTime;
+                }
+                save();
+            }
         };
 
         window.togglePriority = id => {
@@ -2353,9 +2837,29 @@
 
         document.getElementById('exportBtn').onclick = () => {
             const a = document.createElement('a');
-            a.href = URL.createObjectURL(new Blob([JSON.stringify(notes, null, 2)]));
+            const exportData = {
+                notes: notes,
+                archived_notes: archivedNotes
+            };
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(exportData, null, 2)]));
             a.download = 'notes.json';
             a.click();
+        };
+
+        document.getElementById('archiveBtn').onclick = () => {
+            const completed = notes.filter(n => n.done);
+            if (completed.length === 0) {
+                alert('当前活跃列表中没有已完成的任务。');
+                return;
+            }
+            completed.forEach(n => {
+                if (!n.doneTime) n.doneTime = Date.now();
+                archivedNotes.push(n);
+            });
+            notes = notes.filter(n => !n.done);
+            save();
+            saveArchive();
+            alert(`已成功将 ${completed.length} 个已完成任务移入归档历史！`);
         };
 
         let isCleanMode = false;
@@ -2437,7 +2941,8 @@
         };
 
         document.getElementById('clearNotes').onclick = () => {
-            if (confirm('确定清空所有笔记？不可恢复！')) {
+            const opt = confirm('【确定清空活跃任务】？\n点击“确定”仅清空当前未完成任务列表（归档历史会被保留）。\n点击“取消”取消操作。');
+            if (opt) {
                 notes = [];
                 save();
             }
@@ -2790,6 +3295,7 @@
         });
         
         render();
+        renderArchiveHistory();
         // 如果是表格视图，同时渲染表格
         if (currentView === 'table') {
             renderTable();
@@ -3468,5 +3974,10 @@
             input.click();
         };
     </script>
+    
+    <!-- 图片预览 Modal -->
+    <div id="imgModal" class="img-modal" onclick="closeImgModal()">
+        <img id="modalImg" src="" alt="放大图">
+    </div>
 </body>
 </html>
