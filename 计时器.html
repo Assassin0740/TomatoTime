@@ -1676,6 +1676,7 @@
             </div>
             
             <div id="notesList"></div>
+            <div id="notesListSentinel" style="height: 40px; line-height: 40px; margin: 15px 0; text-align: center; color: #888; font-size: 13px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05); cursor: pointer; display: none;">向下滚动加载更多历史任务</div>
 
             <!-- 归档历史面板 -->
             <div class="archive-container" id="archiveContainer">
@@ -2170,7 +2171,7 @@
                     }
                 } else {
                     if (img.src && img.src.startsWith('data:image')) {
-                        img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+                        img.src = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==";
                     }
                 }
             });
@@ -2179,7 +2180,8 @@
         });
 
         function bindLazyImages() {
-            document.querySelectorAll('.lazy-img').forEach(img => {
+            document.querySelectorAll('.lazy-img:not([data-lazy-observed])').forEach(img => {
+                img.setAttribute('data-lazy-observed', 'true');
                 lazyImageObserver.observe(img);
             });
         }
@@ -2195,7 +2197,7 @@
                 const src = img.src || img.getAttribute('src');
                 if (src && !src.startsWith('data:image/svg+xml')) {
                     img.setAttribute('data-src', src);
-                    img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+                    img.src = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==";
                     img.classList.add('lazy-img');
                 }
             }
@@ -2211,6 +2213,8 @@
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
                     const sentinel = entry.target;
+                    sentinelObserver.unobserve(sentinel); // 触发时立即停止观察，防止重绘死循环
+                    
                     if (sentinel.id === 'notesListSentinel') {
                         cardRenderLimit += 15;
                         render();
@@ -2226,13 +2230,17 @@
             rootMargin: "100px"
         });
 
+        let sentinelTimeout = null;
         function bindSentinelObserver() {
-            const listSentinel = document.getElementById('notesListSentinel');
-            if (listSentinel) sentinelObserver.observe(listSentinel);
-            
-            document.querySelectorAll('.archive-sentinel').forEach(sentinel => {
-                sentinelObserver.observe(sentinel);
-            });
+            if (sentinelTimeout) clearTimeout(sentinelTimeout);
+            sentinelTimeout = setTimeout(() => {
+                const listSentinel = document.getElementById('notesListSentinel');
+                if (listSentinel) sentinelObserver.observe(listSentinel);
+                
+                document.querySelectorAll('.archive-sentinel').forEach(sentinel => {
+                    sentinelObserver.observe(sentinel);
+                });
+            }, 100);
         }
 
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
@@ -2391,19 +2399,21 @@
                     </div>
                     <div class="emoji-panel" id="emoji_${n.id}">
                         <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
-                        ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
+                        ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
                     </div>
                 `;
                 list.appendChild(card);
             });
 
             // 滚动加载哨兵机制
-            if (filtered.length > cardRenderLimit) {
-                const sentinel = document.createElement('div');
-                sentinel.id = 'notesListSentinel';
-                sentinel.style.cssText = 'height: 40px; line-height: 40px; margin: 15px 0; text-align: center; color: #888; font-size: 13px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05); cursor: pointer;';
-                sentinel.textContent = `向下滚动加载更多历史任务 (已展示 ${cardRenderLimit}/${filtered.length})`;
-                list.appendChild(sentinel);
+            const sentinel = document.getElementById('notesListSentinel');
+            if (sentinel) {
+                if (filtered.length > cardRenderLimit) {
+                    sentinel.style.display = 'block';
+                    sentinel.textContent = `向下滚动加载更多历史任务 (已展示 ${cardRenderLimit}/${filtered.length})`;
+                } else {
+                    sentinel.style.display = 'none';
+                }
             }
 
             // 重新绑定观察器
@@ -2600,7 +2610,7 @@
                         </div>
                         <div class="emoji-panel" id="emoji_${n.id}">
                             <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
-                            ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
+                            ${memeImages.map(img => `<img class="emoji lazy-img" data-src="表情包/${img}" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
                         </div>
                     </div>
                 `;
