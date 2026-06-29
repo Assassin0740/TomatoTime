@@ -1,0 +1,15 @@
+{
+  "name": "timer-app",
+  "version": "1.0.1",
+  "description": "专注计时器应用",
+  "author": "User",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . 计时器 --platform=win32 --arch=x64 --out=dist --overwrite"
+  },
+  "devDependencies": {
+    "electron": "28.0.0",
+    "electron-packager": "^17.1.2"
+  }
+}

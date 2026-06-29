@@ -1,0 +1,3472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>专注计时器 · 终极置顶悬浮版</title>
+    <style>
+        :root {
+            --glow-color: #00a1d6;
+            --glow-intensity: 40px;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: "Microsoft YaHei", sans-serif;
+            padding: 20px;
+            overflow-y: scroll;
+        }
+
+        body::-webkit-scrollbar {
+            width: 0;
+            height: 0;
+            background: transparent;
+        }
+
+        .bg-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+
+        .bg-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            opacity: 0;
+            transition: opacity 1s ease;
+        }
+
+        .bg-image.active {
+            opacity: 1;
+        }
+
+        .bg-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .settings-btn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            z-index: 1000;
+            width: 40px;
+            height: 40px;
+            background: rgba(30, 30, 30, 0.8);
+            border: 1px solid #555;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: #fff;
+            transition: all 0.2s;
+        }
+
+        .settings-btn:hover {
+            background: rgba(50, 50, 50, 0.9);
+            border-color: #888;
+        }
+
+        .settings-panel {
+            position: fixed;
+            top: 65px;
+            right: 15px;
+            z-index: 1000;
+            background: rgba(30, 30, 30, 0.97);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 15px;
+            width: 360px;
+            max-height: 80vh;
+            overflow-y: auto;
+            display: none;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+        }
+
+        .settings-panel::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .settings-panel::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+        }
+
+        .settings-panel::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        .settings-panel::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .settings-panel.show {
+            display: block;
+        }
+
+        .settings-panel h4 {
+            margin-bottom: 12px;
+            color: #aaa;
+            font-size: 13px;
+        }
+
+        .settings-section {
+            margin-bottom: 18px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+            padding: 12px 15px;
+        }
+
+        .settings-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .settings-section h4 {
+            margin-bottom: 14px;
+            color: #00c5ff;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-left: 8px;
+            border-left: 3px solid #00a1d6;
+        }
+
+        .settings-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            padding: 6px 0;
+        }
+
+        .settings-row label {
+            font-size: 13px;
+            color: #e0e0e0;
+            font-weight: 500;
+            margin-right: auto;
+        }
+
+        .color-picker-wrapper {
+            width: 150px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .color-picker-wrapper input[type="color"] {
+            width: 100%;
+            height: 100%;
+            border: none;
+            cursor: pointer;
+            background: transparent;
+            padding: 0;
+            opacity: 1;
+        }
+
+        .color-picker-wrapper input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+
+        .color-picker-wrapper input[type="color"]::-webkit-color-swatch {
+            border: none;
+            border-radius: 4px;
+        }
+
+        .settings-row input[type="range"] {
+            width: 150px;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            outline: none;
+        }
+
+        .settings-row input[type="range"]::-webkit-slider-runnable-track {
+            -webkit-appearance: none;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 2px;
+        }
+
+        .settings-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #00a1d6;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: -6px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .settings-row input[type="range"]::-webkit-slider-thumb:hover {
+            background: #00c5ff;
+            transform: scale(1.1);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .settings-row input[type="color"] {
+            width: 42px;
+            height: 26px;
+            padding: 0;
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .settings-row input[type="color"]:hover {
+            border-color: rgba(0, 161, 214, 0.6);
+        }
+
+        .collapsible-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: rgba(0, 161, 214, 0.1);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            transition: background 0.2s;
+        }
+
+        .collapsible-header:hover {
+            background: rgba(0, 161, 214, 0.18);
+        }
+
+        .collapsible-header h4 {
+            margin: 0 !important;
+            color: #00c5ff !important;
+            font-size: 12px !important;
+            font-weight: 600 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 1px !important;
+            padding-left: 0 !important;
+            border-left: none !important;
+        }
+
+        #bgSelectorArrow {
+            color: #888;
+            font-size: 12px;
+            transition: transform 0.3s;
+        }
+
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .collapsible-content.show {
+            max-height: 350px;
+            overflow-y: auto;
+        }
+
+        .collapsible-content::-webkit-scrollbar {
+            width: 4px !important;
+            height: 0;
+            background: transparent;
+        }
+
+        .collapsible-content::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+        }
+
+        .collapsible-content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        .collapsible-content::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #888;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #00a1d6;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+            background-color: #fff;
+        }
+
+        .clean-mode .time.no-pulse {
+            animation: none;
+        }
+
+        .time.glow {
+            text-shadow: 0 0 var(--glow-intensity, 40px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 40px) * 2) var(--glow-color, #00a1d6);
+        }
+
+        .bg-selector {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            max-height: 280px;
+            overflow-y: auto;
+            margin-top: 8px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+
+        .bg-selector::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+            background: transparent;
+        }
+
+        .bg-selector::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+        }
+
+        .bg-selector::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        .bg-selector::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .bg-thumb {
+            width: 100%;
+            height: 85px;
+            background-size: cover;
+            background-position: center;
+            border-radius: 8px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            justify-self: center;
+        }
+
+        .bg-thumb:hover {
+            border-color: #888;
+            transform: scale(1.15);
+        }
+
+        .bg-thumb.active {
+            border-color: #00a1d6;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px 30px;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        .timer-section {
+            flex: 0 0 auto;
+            margin-top: calc(20vh);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container.clean-mode {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px 30px;
+        }
+
+        .container.clean-mode .timer-section {
+            margin-top: 0;
+        }
+
+        .notes-container {
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            opacity: 1;
+            max-height: 1000px;
+            transform: translateY(0) scale(1);
+        }
+
+        .clean-mode .notes-container {
+            opacity: 0;
+            max-height: 0;
+            overflow: hidden;
+            pointer-events: none;
+            transform: translateY(-20px) scale(0.95);
+        }
+
+        .mode {
+            font-size: 32px;
+            text-align: center;
+            margin-bottom: 10px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .clean-mode .mode {
+            font-size: 48px;
+            transform: scale(1.1);
+            text-shadow: 0 0 30px rgba(0, 161, 214, 0.5);
+        }
+
+        .time {
+            font-size: 120px;
+            font-weight: bold;
+            text-align: center;
+            color: #fff;
+            text-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            white-space: nowrap;
+            overflow: hidden;
+            display: inline-block;
+        }
+
+        .clean-mode .time {
+            font-size: 160px;
+            transform: scale(1.1);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1.1);
+            }
+            50% {
+                transform: scale(1.12);
+            }
+        }
+
+        .btn-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .clean-mode .btn-group {
+            transform: scale(1.05);
+        }
+
+        .time {
+            font-size: 100px;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+        }
+
+            .time span {
+                display: inline-block;
+                padding: 0 10px;
+            }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+
+            button:hover {
+                background: rgba(255, 255, 255, 0.15);
+                border-color: rgba(255, 255, 255, 0.25);
+                transform: translateY(-1px);
+            }
+
+            button:active {
+                transform: translateY(0);
+            }
+
+        #startBtn {
+            color: #28a745;
+            border-color: #28a745;
+        }
+
+        .time-input {
+            width: 150px;
+            height: 120px;
+            font-size: 100px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            border: 2px solid #00a1d6;
+            text-align: center;
+            outline: none;
+            font-family: inherit;
+            font-weight: bold;
+            border-radius: 8px;
+        }
+
+        .notes-container {
+            margin-top: 40px;
+        }
+
+        .note-card {
+            background: rgba(30, 30, 30, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 25px 30px;
+            margin-bottom: 14px;
+            margin-left: 0px;
+            margin-right: 0px;
+            backdrop-filter: blur(15px);
+            transition: all 0.3s ease;
+        }
+
+        .note-card:hover {
+            background: rgba(40, 40, 40, 0.8);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .tool-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+            .tool-bar select {
+                padding: 8px 12px;
+                background: #111;
+                color: #fff;
+                border: 1px solid #444;
+                border-radius: 6px;
+            }
+
+        .note-input-wrapper {
+            margin-bottom: 20px;
+        }
+
+        textarea, .note-input {
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 12px;
+            font-size: 15px;
+            border-radius: 8px;
+            resize: none;
+            margin-bottom: 10px;
+            min-height: 80px;
+        }
+        
+        .note-input {
+            outline: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .note-input:empty:before {
+            content: attr(placeholder);
+            color: #666;
+        }
+        
+        .note-input img {
+            max-width: 100%;
+            max-height: 200px;
+            object-fit: contain;
+            border-radius: 8px;
+            margin: 4px 0;
+        }
+
+        .priority-row,
+        .type-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .sort-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .sort-btn {
+            padding: 8px 14px;
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            background: rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .sort-btn:hover {
+            background: rgba(76, 175, 80, 0.4);
+        }
+
+        .sort-btn span {
+            font-size: 12px;
+            transition: color 0.2s;
+        }
+
+        .sort-btn.desc {
+            border-color: rgba(255, 193, 7, 0.5);
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+        }
+
+        .filter-dropdown {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .filter-toggle-btn {
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .filter-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .filter-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 5px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            padding: 5px;
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 120px;
+            z-index: 100;
+        }
+
+        .filter-menu.show {
+            display: flex;
+        }
+
+        .filter-option {
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            text-align: left;
+            transition: all 0.2s;
+        }
+
+        .filter-option:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .filter-option.active {
+            background: rgba(76, 175, 80, 0.3);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .action-buttons button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        #addNoteBtn {
+            background: #00a1d6;
+            color: #fff;
+        }
+
+        #addNoteBtn:hover {
+            background: #0088b3;
+        }
+
+        #clearNotes {
+            background: rgba(244, 67, 54, 0.2);
+            color: #ef5350;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+        }
+
+        #clearNotes:hover {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        #exportBtn {
+            background: rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+        }
+
+        #exportBtn:hover {
+            background: rgba(76, 175, 80, 0.3);
+        }
+
+        .priority-btn {
+            flex: 1;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .p1 {
+            background: #22cc88;
+            color: #000;
+        }
+
+        .p2 {
+            background: #ffcc00;
+            color: #000;
+        }
+
+        .p3 {
+            background: #ff4444;
+            color: #fff;
+        }
+
+        .priority-btn.active {
+            border: 2px solid #fff;
+        }
+
+        .type-btn {
+            flex: 1;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .type-btn.short {
+            background: #2196F3;
+            color: #fff;
+        }
+
+        .type-btn.long {
+            background: #9C27B0;
+            color: #fff;
+        }
+
+        .type-btn.active {
+            border: 2px solid #fff;
+        }
+
+        .type-toggle-btn {
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .type-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .type-toggle-btn.active {
+            background: #00a1d6;
+            border-color: #00a1d6;
+        }
+
+        .note-card {
+            padding: 14px 4px;
+            border-bottom: 1px solid #222;
+            position: relative;
+        }
+
+        .note-date {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 6px;
+            padding: 0 8px;
+        }
+
+        .note-content-editable {
+            font-size: 15px;
+            line-height: 1.6;
+            outline: none;
+            margin-bottom: 8px;
+            color: #eee;
+            padding: 10px 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+        }
+
+        .note-content-editable img {
+            max-width: 100%;
+            max-height: 200px;
+            object-fit: contain;
+            border-radius: 8px;
+            margin: 4px 0;
+        }
+
+        .context-menu {
+            position: fixed;
+            background: #222;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 8px 0;
+            min-width: 120px;
+            z-index: 9999;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            display: none;
+        }
+
+        .context-menu.show {
+            display: block;
+        }
+
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            color: #ddd;
+            font-size: 13px;
+        }
+
+        .context-menu-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .note-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #888;
+            padding: 0 8px;
+        }
+
+        .note-actions {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .icon {
+            font-size: 18px;
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            transition: all 0.2s ease;
+        }
+
+        .icon:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.1);
+        }
+
+        .status-tag {
+            font-size: 12px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .status-undone {
+            background: #ff4444;
+            color: #fff;
+        }
+
+        .status-done {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .comments-section {
+            background: #0a0a0a;
+            border-radius: 6px;
+            margin-top: 8px;
+            padding: 8px;
+        }
+
+        .single-comment {
+            background: rgba(30, 30, 30, 0.85);
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            backdrop-filter: blur(10px);
+        }
+
+        .comment-text {
+            flex: 1;
+            color: #ccc;
+            font-size: 14px;
+            word-break: break-all;
+        }
+
+        .comment-delete {
+            color: #ff4444;
+            cursor: pointer;
+            margin-left: 8px;
+            font-size: 12px;
+        }
+
+        .comment-input-area {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+            margin-top: 6px;
+        }
+
+        .comment-input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .comment-input {
+            width: 100%;
+            background: #151515;
+            border: 1px solid #333;
+            color: #ccc;
+            padding: 16px 20px;
+            font-size: 15px;
+            border-radius: 8px;
+            min-height: 90px;
+            line-height: 1.5;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 6px;
+            outline: none;
+        }
+
+        .comment-input:empty:not(:focus)::before {
+            content: attr(data-placeholder);
+            color: #555;
+            pointer-events: none;
+        }
+
+        .send-btn {
+            padding: 14px 24px;
+            background: #00a1d6;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            height: 40px;
+        }
+
+        .emoji-toggle {
+            padding: 10px 16px;
+            background: #222;
+            border: 1px solid #444;
+            border-radius: 6px;
+            cursor: pointer;
+            color: #888;
+            font-size: 14px;
+            transition: all 0.2s;
+            height: 40px;
+        }
+
+        .emoji-toggle:hover {
+            background: #333;
+            color: #fff;
+        }
+
+        .emoji-panel {
+            display: none;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            margin-top: 8px;
+            padding: 12px;
+            background: #111;
+            border-radius: 8px;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+
+        .emoji-panel.show {
+            display: grid;
+        }
+
+        .emoji {
+            width: 65px;
+            height: 65px;
+            cursor: pointer;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 2px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .emoji-import-btn {
+            width: 65px;
+            height: 65px;
+            cursor: pointer;
+            border-radius: 8px;
+            border: 2px dashed #444;
+            background: rgba(255, 255, 255, 0.05);
+            color: #666;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .emoji-import-btn:hover {
+            border-color: #00a1d6;
+            color: #00a1d6;
+            background: rgba(0, 161, 214, 0.1);
+        }
+
+        .emoji:hover {
+            border-color: #888;
+            transform: scale(1.15);
+        }
+
+        .preview-img {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+            margin-top: 4px;
+        }
+
+        .preview-img:hover::after {
+            content: '×';
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 20px;
+            height: 20px;
+            background: #ff4444;
+            border-radius: 50%;
+            font-size: 14px;
+            text-align: center;
+            line-height: 20px;
+            z-index: 10;
+        }
+
+        .priority-tag,
+        .type-tag {
+            font-size: 12px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 5px;
+        }
+
+        .table-view-container {
+            display: none;
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+
+        .table-view-container.active {
+            display: block;
+        }
+
+        .task-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(30, 30, 30, 0.8);
+            border-radius: 12px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+
+        .task-table th,
+        .task-table td {
+            padding: 14px 18px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .task-table th:nth-child(3),
+        .task-table td:nth-child(3) {
+            width: 100px;
+        }
+
+        .task-table th:nth-child(2),
+        .task-table td:nth-child(2) {
+            width: 85px;
+        }
+
+        .task-table th {
+            background: rgba(0, 0, 0, 0.3);
+            font-weight: 600;
+            color: #aaa;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .task-table tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .task-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .table-content {
+            max-width: 220px;
+            word-break: break-all;
+            white-space: normal;
+            line-height: 1.5;
+        }
+
+        .view-toggle-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #ccc;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+        }
+
+        .view-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .view-toggle-btn.active {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: rgba(76, 175, 80, 0.5);
+            color: #81c784;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bg-container" id="bgContainer">
+        <div class="bg-overlay" id="bgOverlay"></div>
+    </div>
+
+    <button class="settings-btn" id="settingsBtn">⚙</button>
+
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-section">
+            <h4>基础设置</h4>
+            <div class="settings-row">
+                <label>背景明暗</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="darknessSlider" min="0" max="100" value="70">
+                    <span id="darknessValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">70%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>音量大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="volumeSlider" min="0" max="300" value="100">
+                    <span id="volumeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>完整文字大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="normalFontSizeSlider" min="50" max="500" value="100">
+                    <span id="normalFontSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>纯净文字大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="cleanFontSizeSlider" min="50" max="500" value="100">
+                    <span id="cleanFontSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>模式标签大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="modeLabelSizeSlider" min="50" max="300" value="100">
+                    <span id="modeLabelSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>呼吸效果</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="pulseToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>显示模式标签</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="showModeLabel" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>颜色设置</h4>
+            <div class="settings-row">
+                <label>倒计时颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="timerColorPicker" value="#ffffff">
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>是否发光</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="glowEnabled" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>发光颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="glowColorPicker" value="#00a1d6">
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>发光程度</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="glowIntensitySlider" min="0" max="100" value="50">
+                    <span id="glowIntensityValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">50%</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>悬浮窗设置</h4>
+            <div class="settings-row">
+                <label>阴影颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="shadowColorPicker" value="#000000">
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>阴影大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="shadowSizeSlider" min="0" max="100" value="20">
+                    <span id="shadowSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">20%</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="collapsible-header" onclick="toggleCollapsible('bgSelector')">
+                <h4 style="display: inline;">选择背景</h4>
+                <span id="bgSelectorArrow">▼</span>
+            </div>
+            <div id="bgSelectorContainer" class="collapsible-content">
+                <div class="bg-selector" id="bgSelector"></div>
+                <button id="importBgBtn" style="margin-top: 10px; padding: 8px 16px; background: rgba(76, 175, 80, 0.2); border: 1px solid rgba(76, 175, 80, 0.5); color: #81c784; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">导入背景图片</button>
+            </div>
+        </div>
+        <input type="file" id="bgFileInput" accept="image/*" style="display: none;">
+    </div>
+
+    <div class="container">
+        <div class="timer-section">
+            <div class="mode" id="modeText">工作时间</div>
+            <div class="time" id="timeText">
+                <span id="min">25</span>:<span id="sec">00</span>
+            </div>
+
+            <div class="btn-group">
+                <button id="startBtn">开始</button>
+                <button id="saveTimeBtn">保存</button>
+                <button id="switchBtn">切换</button>
+                <div style="display: inline-flex; align-items: center;">
+                    <button id="openFloatBtn">悬浮窗</button>
+                    <button id="floatLockBtn" style="display: none; margin-left: 5px; padding: 8px 12px; font-size: 16px;" title="锁定/解锁悬浮窗">🔓</button>
+                </div>
+                <button id="toggleCleanMode">纯净模式</button>
+            </div>
+        </div>
+
+        <div class="notes-container">
+            <div class="tool-bar">
+                <div class="sort-buttons">
+                    <button id="sortTime" class="sort-btn">时间 <span>↑</span></button>
+                    <button id="sortPriority" class="sort-btn">紧急 <span>↑</span></button>
+                    <button id="sortDone" class="sort-btn">未完成 <span>↑</span></button>
+                </div>
+                <div class="filter-dropdown">
+                    <button id="filterToggle" class="filter-toggle-btn">筛选: 全部 ▼</button>
+                    <div id="filterMenu" class="filter-menu">
+                        <button id="filterAll" class="filter-option active">全部</button>
+                        <button id="filterUndone" class="filter-option">未完成</button>
+                        <button id="filterDone" class="filter-option">已完成</button>
+                        <button id="filterP3" class="filter-option">紧急</button>
+                        <button id="filterP2" class="filter-option">中等</button>
+                        <button id="filterP1" class="filter-option">不紧急</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="note-input-wrapper">
+                <div id="noteInput" class="note-input" contenteditable="true" placeholder="输入本次任务…"></div>
+                <div class="priority-row">
+                    <div class="priority-btn p1 active" data-p="1">① 不紧急</div>
+                    <div class="priority-btn p2" data-p="2">② 中等</div>
+                    <div class="priority-btn p3" data-p="3">③ 紧急</div>
+                </div>
+                <div class="type-row">
+                    <div class="type-btn short active" data-type="short">短期</div>
+                    <div class="type-btn long" data-type="long">长期</div>
+                </div>
+                <div class="action-buttons">
+                    <button id="addNoteBtn">添加</button>
+                    <button id="clearNotes">清空</button>
+                    <button id="exportBtn">导出</button>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button class="view-toggle-btn active" onclick="toggleView('card')">卡片视图</button>
+                <button class="view-toggle-btn" onclick="toggleView('table')">表格视图</button>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button class="type-toggle-btn active" onclick="toggleTypeView('all')">全部</button>
+                <button class="type-toggle-btn" onclick="toggleTypeView('short')">短期</button>
+                <button class="type-toggle-btn" onclick="toggleTypeView('long')">长期</button>
+            </div>
+            
+            <div id="notesList"></div>
+            
+            <!-- 右键菜单 -->
+            <div class="context-menu" id="contextMenu">
+                <div class="context-menu-item" id="pasteImageItem">粘贴图片</div>
+            </div>
+            
+            <div id="tableView" class="table-view-container">
+                <table class="task-table">
+                    <thead>
+                        <tr>
+                            <th>任务内容</th>
+                            <th>优先级</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 检测运行环境
+        const isElectron = typeof require !== 'undefined' && typeof process !== 'undefined';
+        
+        // 显示环境提示
+        if (!isElectron) {
+            console.warn('⚠️ 警告：此应用需要在Electron环境中运行！');
+            console.warn('请使用 npm start 命令启动，不要直接在浏览器中打开HTML文件');
+            
+            // 显示警告提示
+            const warningDiv = document.createElement('div');
+            warningDiv.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#ff4444;color:white;padding:15px 30px;border-radius:8px;z-index:99999;font-size:16px;';
+            warningDiv.innerHTML = '⚠️ 请通过Electron运行此应用！使用 <strong>npm start</strong> 命令';
+            document.body.appendChild(warningDiv);
+            
+            setTimeout(() => {
+                warningDiv.style.display = 'none';
+            }, 10000);
+        }
+        
+        console.log('✅ 应用加载中... 运行环境:', isElectron ? 'Electron' : '浏览器');
+        
+        const memeImages = [
+            '01e89652da2e85dc503a3761fb6ac7653546769371695776.png@1052w_!web-dynamic.webp',
+            '041cd265303589d6d0d571afdfce1fd83546769371695776.png@1052w_!web-dynamic.webp',
+            '042b509ff14b2bdcd24a97eec7cf04c73546769371695776.png@1052w_!web-dynamic.avif',
+            '19198f988ae9a801f99117de4122f1ff3546769371695776.png@1052w_!web-dynamic.webp',
+            '19fda978049b40fc21fde5c85ce2f36f3546769371695776.png@1052w_!web-dynamic.avif',
+            '1a10abe7a909836b368a1cf81a69ec113546769371695776.png@1052w_!web-dynamic.webp',
+            '1f0c2fa74d3dd0b3e5d7077ceaff074b3546769371695776.png@264w_264h_1e_1c.webp',
+            '23f1bc4b64b0bba139db47dc36a67ebb3546769371695776.png@1052w_!web-dynamic.avif',
+            '2951d9aa1ba5ab328c4f2578fa879e883546769371695776.png@1052w_!web-dynamic.webp',
+            '2b51514bfa40169b32ea651ec5e438fa3546769371695776.png@1052w_!web-dynamic.avif',
+            '33d1de9ce77167efb67745cbd5ed7f353546769371695776.jpg@560w_560h_1e_1c.webp',
+            '3402f5f1e2aa5e6014063c511c33e0113546769371695776.png@1052w_!web-dynamic.avif',
+            '345f13031e3a16f6e4b93e7b2f7b4f603546769371695776.png@264w_264h_1e_1c.webp',
+            '3536666fd54869340b6cb10ff50770743546769371695776.png',
+            '35914d0ce9649ceda6ce60afda46a7193546769371695776.png@1052w_!web-dynamic.webp',
+            '37c8c3f8282adbfa7200606e8dad9b9f3546769371695776.png@1052w_!web-dynamic.webp',
+            '384503c8334ed269919523b9df8e6e533546769371695776.png@1052w_!web-dynamic.avif',
+            '3859e9ee23bb166c0c38440942148a633546769371695776.png',
+            '38a6c1e961b9ae27bed221b5fed4afc13546769371695776.gif',
+            '426f43344c576d063721551894216d203546769371695776.png@1052w_!web-dynamic.webp',
+            '441330913b1746ec3118f241c083fc883546769371695776.png',
+            '4477c8b1141cd2cd9aef2102fca5bbfa3546769371695776.png@264w_264h_1e_1c.webp',
+            '4defca7da871d965862ed6ac51a57cf23546769371695776.png@1052w_!web-dynamic.avif',
+            '4f1df7b10fa77f80df98063e5be496ac3546769371695776.jpg@714w_536h_1c_1s.webp',
+            '5053bc3e6cb6afe9b0099d368f8849783546769371695776.png@1052w_!web-dynamic.webp',
+            '56468a8cafbb35d71cd99a75d754718a3546769371695776.jpg@402w_536h_1c_1s.webp',
+            '6431901e4a9559a054c917d721b6706b3546769371695776.png',
+            '68792ebe836b3c3bdf3d97596e3329463546769371695776.png',
+            '6ea3884bc98a4114d25cd65f7037f0bf3546769371695776.png@1052w_!web-dynamic.avif',
+            '6ea41b3772f26bfad4bc8b3afa6874363546769371695776.png@1052w_!web-dynamic.webp',
+            '70676dd28cc011f0518f0ca513383413546769371695776.jpg@536w_536h_1c_1s.webp',
+            '70c57017fc08776e0640dc6eff7563413546769371695776.png@1052w_!web-dynamic.avif',
+            '78ae61efa2e6bd5e0e8f4e6008b784e73546769371695776.png@1052w_!web-dynamic.webp',
+            '7ab98e494501f091012eaca16db997223546769371695776.png@1052w_!web-dynamic.webp',
+            '82fbed2937436d7732e838d8a749fd413546769371695776.jpg@1052w_!web-dynamic.webp',
+            '839bd51145cf013340d428455e3c0cb63546769371695776.jpg@1052w_!web-dynamic.avif',
+            '876b67ab8d5092201c62edf6ffca33163546769371695776.png@1052w_!web-dynamic.avif',
+            '87b6acd88f7c198ce6c8f8df2b67a22f3546769371695776.jpg@1052w_!web-dynamic.webp',
+            '8ca3620e3f9232088bc629b683b87e183546769371695776.png@1052w_!web-dynamic.avif',
+            '932d7b43ea10a7ee29c48daaf620fab73546769371695776.png@1052w_!web-dynamic.webp',
+            '967fe48d2d27e55b926c86c69a64ce333546769371695776.png@1052w_!web-dynamic.avif',
+            '9a973203685b88b0a759f6d3f33464ce3546769371695776.png@1052w_!web-dynamic.webp',
+            '9eef3bef04114e5a4931d1d584bc49fc3546769371695776.jpg@714w_536h_1c_1s.webp',
+            '9f8c546514f61756e3d58a77c80e775b3546769371695776.png@1052w_!web-dynamic.avif',
+            'a52cf2ce87ebe6fcc01f29b15ec7943b3546769371695776.png@1052w_!web-dynamic.avif',
+            'a7d0f21a37fe7e251cbf749426b8ee243546769371695776.png@264w_264h_1e_1c.webp',
+            'b03c818e5021ce3b8b584693711752323546769371695776.jpg@1052w_!web-dynamic.webp',
+            'b0d2a06eb91695b0ae0686643cb637b93546769371695776.png@1052w_!web-dynamic.webp',
+            'b32bda2b798a3c291087a87d3bee19c23546769371695776.png@1052w_!web-dynamic.webp',
+            'b47b3df9a817350f26270a274110e73a3546769371695776.png@1052w_!web-dynamic.avif',
+            'b5609913f08fc37e8d08d77a6ab3db623546769371695776.png@1052w_!web-dynamic.avif',
+            'bfeffbf36146fc5d70a314f8738f5a753546769371695776.png@1052w_!web-dynamic.avif',
+            'c849f82f4069a7038ce18060a12855533546769371695776.jpg@1052w_!web-dynamic.webp',
+            'ccecc1c93fd928cb21135114136ff50f3546769371695776.jpg@714w_536h_1c_1s.webp',
+            'cfc8986fafcd64d2d1210545355ef4da3546769371695776.png@1052w_!web-dynamic.avif',
+            'db3017875ff08e135603f1519aded14f3546769371695776.gif@1052w_!web-dynamic.webp',
+            'e93f9477215aaabe492a4b006b732acf3546769371695776.png@1052w_!web-dynamic.webp',
+            'f086aabc0140fbfe4bf4785971a401ea3546769371695776.png@1052w_!web-dynamic.avif',
+            'f1f573dcd5cea263421b180b03e8d7743546769371695776.jpg@536w_536h_1c_1s.webp',
+            'f5a51f492b7ac651468ad5a2a75ea4643546769371695776.png@1052w_!web-dynamic.avif',
+            'f5e54f51168ef7ac4d3cb2077b7934e53546769371695776.jpg@1052w_!web-dynamic.webp',
+            'fd5c33d14d2f949d8613f04c3dabb4003546769371695776.png@1052w_!web-dynamic.webp'
+        ];
+
+        const WORK_TIME = 25 * 60;
+        const REST_TIME = 10 * 60;
+
+        let currentTime = WORK_TIME;
+        let isWorking = true;
+        let timer = null;
+        let currentPriority = 1;
+        let floatWin = null;
+        let isTimerPaused = false;
+
+        const minEl = document.getElementById('min');
+        const secEl = document.getElementById('sec');
+        const modeText = document.getElementById('modeText');
+
+        function updateTimeDisplay() {
+            const m = String(Math.floor(currentTime / 60)).padStart(2, '0');
+            const s = String(currentTime % 60).padStart(2, '0');
+            minEl.innerText = m;
+            secEl.innerText = s;
+
+            if (floatWin && !floatWin.closed) {
+                floatWin.document.getElementById('floatTime').innerText = `${m}:${s}`;
+                floatWin.document.getElementById('floatLabel').innerText = isWorking ? '工作时间' : '休息时间';
+            }
+            
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-time', {
+                        time: `${m}:${s}`,
+                        label: isWorking ? '工作时间' : '休息时间'
+                    });
+                } catch(e) {}
+            }
+        }
+
+        function makeEditable(el, isMin) {
+            el.onclick = () => {
+                stopTimer();
+                const currentVal = isMin ? Math.floor(currentTime / 60) : currentTime % 60;
+                el.innerHTML = `<input type="number" class="time-input" id="timeInput_${isMin ? 'min' : 'sec'}" value="${currentVal}" min="0" max="${isMin ? 99 : 59}">`;
+                const input = el.querySelector('input');
+                input.focus();
+                input.select();
+
+                const finishEdit = () => {
+                    let v = parseInt(input.value) || 0;
+                    if (isMin) {
+                        v = Math.max(0, Math.min(99, v));
+                        currentTime = v * 60 + (currentTime % 60);
+                    } else {
+                        v = Math.max(0, Math.min(59, v));
+                        currentTime = Math.floor(currentTime / 60) * 60 + v;
+                    }
+                    updateTimeDisplay();
+                };
+
+                input.onblur = finishEdit;
+                input.onkeydown = e => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        finishEdit();
+                    }
+                };
+            };
+        }
+        makeEditable(minEl, true);
+        makeEditable(secEl, false);
+
+        let workEndSound = new Audio('仕事終わったよ.wav');
+        let restEndSound = new Audio('休憩終わったよ.wav');
+        workEndSound.volume = 1.0;
+        restEndSound.volume = 1.0;
+
+        function playEndSound() {
+            stopTimer();
+            if (isWorking) {
+                workEndSound.currentTime = 0;
+                workEndSound.play();
+            } else {
+                restEndSound.currentTime = 0;
+                restEndSound.play();
+            }
+            const msg = isWorking ? "工作结束啦" : "休息结束啦";
+            const tip = document.createElement('div');
+            tip.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#ff3366;color:#fff;padding:30px 50px;border-radius:12px;font-size:24px;z-index:99999';
+            tip.innerText = msg;
+            document.body.appendChild(tip);
+            setTimeout(() => tip.remove(), 3000);
+        }
+
+        function stopTimer() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        function toggleTimer() {
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    // 只有在计时器未运行时才同步时间，运行时直接切换即可
+                    if (document.getElementById('startBtn').innerText === '开始') {
+                        ipcRenderer.send('set-timer-time', {
+                            minutes: Math.floor(currentTime / 60),
+                            seconds: currentTime % 60
+                        });
+                    }
+                    ipcRenderer.send('toggle-timer');
+                } catch(e) {}
+            }
+        }
+
+        const dropZone = document.createElement('div');
+        dropZone.id = 'dropZone';
+        dropZone.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            color: #fff;
+            font-size: 24px;
+            border: 4px dashed #00a1d6;
+        `;
+        dropZone.textContent = '拖放 JSON 文件到此处导入笔记';
+        document.body.appendChild(dropZone);
+
+        const importDialog = document.createElement('div');
+        importDialog.id = 'importDialog';
+        importDialog.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #222;
+            border-radius: 12px;
+            padding: 24px;
+            z-index: 10001;
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+            min-width: 320px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        `;
+        
+        const dialogTitle = document.createElement('div');
+        dialogTitle.textContent = '导入笔记';
+        dialogTitle.style.cssText = `
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            text-align: center;
+        `;
+        importDialog.appendChild(dialogTitle);
+
+        const dialogButtons = document.createElement('div');
+        dialogButtons.style.cssText = `
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        `;
+        importDialog.appendChild(dialogButtons);
+
+        const overwriteBtn = document.createElement('button');
+        overwriteBtn.textContent = '覆盖';
+        overwriteBtn.style.cssText = `
+            padding: 10px 24px;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        `;
+        overwriteBtn.onmouseover = () => overwriteBtn.style.transform = 'scale(1.05)';
+        overwriteBtn.onmouseout = () => overwriteBtn.style.transform = 'scale(1)';
+        dialogButtons.appendChild(overwriteBtn);
+
+        const mergeBtn = document.createElement('button');
+        mergeBtn.textContent = '合并';
+        mergeBtn.style.cssText = `
+            padding: 10px 24px;
+            background: linear-gradient(135deg, #4ecdc4, #44a3a0);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        `;
+        mergeBtn.onmouseover = () => mergeBtn.style.transform = 'scale(1.05)';
+        mergeBtn.onmouseout = () => mergeBtn.style.transform = 'scale(1)';
+        dialogButtons.appendChild(mergeBtn);
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '取消';
+        cancelBtn.style.cssText = `
+            padding: 10px 24px;
+            background: rgba(100,100,100,0.3);
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: #aaa;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        `;
+        cancelBtn.onmouseover = () => cancelBtn.style.background = 'rgba(100,100,100,0.5)';
+        cancelBtn.onmouseout = () => cancelBtn.style.background = 'rgba(100,100,100,0.3)';
+        dialogButtons.appendChild(cancelBtn);
+
+        document.body.appendChild(importDialog);
+
+        let pendingImportData = null;
+
+        function showImportDialog(data) {
+            pendingImportData = data;
+            importDialog.style.display = 'flex';
+        }
+
+        function hideImportDialog() {
+            importDialog.style.display = 'none';
+            pendingImportData = null;
+        }
+
+        overwriteBtn.onclick = () => {
+            if (pendingImportData) {
+                notes = pendingImportData;
+                save();
+                alert('覆盖成功！');
+            }
+            hideImportDialog();
+        };
+
+        mergeBtn.onclick = () => {
+            if (pendingImportData) {
+                notes = notes.concat(pendingImportData);
+                save();
+                alert('合并成功！');
+            }
+            hideImportDialog();
+        };
+
+        cancelBtn.onclick = hideImportDialog;
+
+        // 先初始化视图和类型相关的状态变量
+        let currentView = localStorage.getItem('currentView') || 'card';
+        let currentTypeView = localStorage.getItem('currentTypeView') || 'all';
+        let currentType = 'short'; // 默认短期
+
+        let isDragOver = false;
+        
+        document.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!isDragOver) {
+                isDragOver = true;
+                dropZone.style.display = 'flex';
+            }
+        });
+
+        document.addEventListener('dragleave', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = dropZone.getBoundingClientRect();
+            if (e.clientX <= rect.left || e.clientX >= rect.right || 
+                e.clientY <= rect.top || e.clientY >= rect.bottom) {
+                isDragOver = false;
+                dropZone.style.display = 'none';
+            }
+        });
+
+        document.addEventListener('drop', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.style.display = 'none';
+            isDragOver = false;
+            
+            const file = e.dataTransfer.files[0];
+            if (!file || !file.name.endsWith('.json')) {
+                alert('请拖放 JSON 文件');
+                return;
+            }
+            
+            const r = new FileReader();
+            r.onload = e => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!Array.isArray(data)) {
+                        alert('无效的笔记数据格式');
+                        return;
+                    }
+                    
+                    showImportDialog(data);
+                } catch (err) {
+                    alert('导入失败：' + err.message);
+                }
+            };
+            r.readAsText(file);
+        });
+
+        let notes = JSON.parse(localStorage.getItem('notes')) || [];
+        let needsSave = false;
+        // 给旧笔记添加默认type字段
+        notes.forEach(note => {
+            if (!note.type) {
+                note.type = 'short';
+                needsSave = true;
+            }
+        });
+        // 如果修改了旧笔记数据，保存回localStorage
+        if (needsSave) {
+            localStorage.setItem('notes', JSON.stringify(notes));
+        }
+        function save() { localStorage.setItem('notes', JSON.stringify(notes)); render(); }
+
+        function render() {
+            const list = document.getElementById('notesList');
+            list.innerHTML = '';
+
+            let filtered = [...notes];
+            if (currentFilter === 'undone') filtered = filtered.filter(x => !x.done);
+            if (currentFilter === 'done') filtered = filtered.filter(x => x.done);
+            if (currentFilter === 'p3') filtered = filtered.filter(x => x.p === 3);
+            if (currentFilter === 'p2') filtered = filtered.filter(x => x.p === 2);
+            if (currentFilter === 'p1') filtered = filtered.filter(x => x.p === 1);
+            
+            // 类型过滤
+            if (currentTypeView === 'short') filtered = filtered.filter(x => x.type === 'short');
+            if (currentTypeView === 'long') filtered = filtered.filter(x => x.type === 'long');
+
+            filtered.sort((a, b) => {
+                // 1. 先按完成状态排序：已完成的放下面
+                const aDone = a.done ? 1 : 0;
+                const bDone = b.done ? 1 : 0;
+                if (aDone !== bDone) {
+                    return aDone - bDone; // 未完成的在前面
+                }
+                
+                // 2. 再按优先级排序
+                let priorityResult = 0;
+                if (sortDirections.priority === 'asc') {
+                    priorityResult = a.p - b.p;
+                } else {
+                    priorityResult = b.p - a.p;
+                }
+                if (priorityResult !== 0) {
+                    return priorityResult;
+                }
+                
+                // 3. 最后按时间排序
+                if (sortDirections.time === 'asc') {
+                    return a.ts - b.ts;
+                } else {
+                    return b.ts - a.ts;
+                }
+            });
+
+            filtered.forEach(n => {
+                const card = document.createElement('div');
+                card.className = 'note-card';
+                const pColor = n.p === 1 ? '#22cc88' : n.p === 2 ? '#ffcc00' : '#ff4444';
+                const typeColor = n.type === 'short' ? '#2196F3' : '#9C27B0';
+                const typeText = n.type === 'short' ? '短期' : '长期';
+                
+                // 给没有type字段的旧数据设置默认值
+                if (!n.type) n.type = 'short';
+
+                let commentsHtml = '';
+                if (n.comments && n.comments.length > 0) {
+                    commentsHtml = `<div class="comments-section">
+                        ${n.comments.map((c, ci) => `
+                            <div class="single-comment">
+                                <span class="comment-text">${renderCommentText(c.text)}</span>
+                                <span class="comment-delete" onclick="deleteComment(${n.id}, ${ci})">✕</span>
+                            </div>
+                        `).join('')}
+                    </div>`;
+                }
+
+                card.innerHTML = `
+                    <div class="note-date">${formatDate(n.ts)}</div>
+                    <div class="note-content-editable" contenteditable="true" data-note-id="${n.id}" onblur="handleNoteBlur(this)" onkeydown="handleNoteKeydown(event)">${n.content}</div>
+                    <div class="note-footer">
+                        <div>
+                            <span class="priority-tag" style="background:${pColor};color:#fff;cursor:pointer" onclick="togglePriority(${n.id})" title="点击切换优先级">${n.p === 1 ? '低' : n.p === 2 ? '中' : '高'}</span>
+                            <span class="type-tag" style="background:${typeColor};color:#fff;cursor:pointer" onclick="toggleType(${n.id})" title="点击切换类型">${typeText}</span>
+                            <span class="status-tag ${n.done ? 'status-done' : 'status-undone'}" style="cursor:pointer" onclick="toggleDone(${n.id})" title="点击切换完成状态">${n.done ? '已完成' : '未完成'}</span>
+                        </div>
+                        <div class="note-actions">
+                            <span class="icon" title="完成" onclick="toggleDone(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
+                            <span class="icon" title="评论" onclick="toggleComment(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2z"/></svg></span>
+                            <span class="icon" title="删除" onclick="deleteNote(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></span>
+                        </div>
+                    </div>
+                    ${commentsHtml}
+                    <div class="comment-input-area" id="commentArea_${n.id}" style="display:none">
+                        <div class="comment-input-wrapper">
+                            <div class="comment-input" id="c_${n.id}" contenteditable="true" data-placeholder="添加批注…" onkeydown="handleCommentKeydown(event, ${n.id})"></div>
+                        </div>
+                        <button class="emoji-toggle" onclick="toggleEmojiPanel(${n.id})">表情包</button>
+                        <button class="send-btn" onclick="addComment(${n.id})">发送</button>
+                    </div>
+                    <div class="emoji-panel" id="emoji_${n.id}">
+                        <button class="emoji-import-btn" onclick="importMeme(${n.id})" title="导入表情包">+</button>
+                        ${memeImages.map(img => `<img class="emoji" src="表情包/${img}" onclick="insertEmoji('c_${n.id}', ${n.id}, '${img}')" />`).join('')}
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 右键菜单和图片粘贴功能
+        let currentEditableElement = null;
+        
+        document.addEventListener('contextmenu', (e) => {
+            const target = e.target;
+            const editable = target.closest('.note-content-editable, .table-content');
+            
+            if (editable) {
+                e.preventDefault();
+                currentEditableElement = editable;
+                
+                const menu = document.getElementById('contextMenu');
+                menu.style.left = e.pageX + 'px';
+                menu.style.top = e.pageY + 'px';
+                menu.classList.add('show');
+            }
+        });
+        
+        document.addEventListener('click', () => {
+            document.getElementById('contextMenu').classList.remove('show');
+        });
+        
+        document.getElementById('pasteImageItem').onclick = async () => {
+            if (!currentEditableElement) return;
+            
+            // 先获取元素引用，后面可能被重置
+            const editable = currentEditableElement;
+            
+            try {
+                const items = await navigator.clipboard.read();
+                
+                for (const item of items) {
+                    if (item.types.includes('image/png') || item.types.includes('image/jpeg') || item.types.includes('image/webp') || item.types.includes('image/gif')) {
+                        const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                        
+                        // 将blob转换为base64
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Data = reader.result;
+                            
+                            const img = document.createElement('img');
+                            img.src = base64Data;
+                            img.style.maxWidth = '100%';
+                            img.style.maxHeight = '200px';
+                            img.style.objectFit = 'contain';
+                            img.style.borderRadius = '8px';
+                            img.style.margin = '4px 0';
+                            
+                            editable.appendChild(img);
+                            
+                            // 检查是表格视图还是卡片视图
+                            if (editable.classList.contains('table-content')) {
+                                const noteId = parseInt(editable.parentElement.getAttribute('data-note-id'));
+                                const n = notes.find(x => x.id === noteId);
+                                if (n) {
+                                    n.content = editable.innerHTML;
+                                    save();
+                                    console.log('表格视图图片已保存');
+                                }
+                            } else {
+                                updateNoteContent(editable);
+                                console.log('卡片视图图片已保存');
+                            }
+                        };
+                        reader.readAsDataURL(blob);
+                        break;
+                    }
+                }
+            } catch (err) {
+                console.error('粘贴图片失败:', err);
+                alert('粘贴图片失败，请尝试使用Ctrl+V粘贴');
+            }
+            
+            document.getElementById('contextMenu').classList.remove('show');
+            currentEditableElement = null;
+        };
+        
+        function handleNoteBlur(editable) {
+            updateNoteContent(editable);
+        }
+        
+        function handleNoteKeydown(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+            }
+        }
+
+        // 处理粘贴事件，支持Ctrl+V粘贴图片
+        document.addEventListener('paste', async (e) => {
+            const target = e.target;
+            const editable = target.closest('.note-content-editable, .table-content');
+            
+            if (editable && e.clipboardData && e.clipboardData.files.length > 0) {
+                for (let i = 0; i < e.clipboardData.files.length; i++) {
+                    const file = e.clipboardData.files[i];
+                    if (file.type.startsWith('image/')) {
+                        e.preventDefault();
+                        
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Data = reader.result;
+                            
+                            const img = document.createElement('img');
+                            img.src = base64Data;
+                            img.style.maxWidth = '100%';
+                            img.style.maxHeight = '200px';
+                            img.style.objectFit = 'contain';
+                            img.style.borderRadius = '8px';
+                            img.style.margin = '4px 0';
+                            
+                            const selection = window.getSelection();
+                            if (selection.rangeCount > 0) {
+                                const range = selection.getRangeAt(0);
+                                range.deleteContents();
+                                range.insertNode(img);
+                                range.setStartAfter(img);
+                                range.setEndAfter(img);
+                                selection.removeAllRanges();
+                                selection.addRange(range);
+                            } else {
+                                editable.appendChild(img);
+                            }
+                            
+                            // 保存内容
+                            if (editable.classList.contains('table-content')) {
+                                const noteId = parseInt(editable.parentElement.getAttribute('data-note-id'));
+                                const n = notes.find(x => x.id === noteId);
+                                if (n) {
+                                    n.content = editable.innerHTML;
+                                    save();
+                                }
+                            } else {
+                                updateNoteContent(editable);
+                            }
+                        };
+                        reader.readAsDataURL(file);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        function updateNoteContent(editable) {
+            const noteId = parseInt(editable.getAttribute('data-note-id'));
+            if (!isNaN(noteId)) {
+                const note = notes.find(n => n.id === noteId);
+                if (note) {
+                    note.content = editable.innerHTML;
+                    save();
+                }
+            }
+        }
+        
+        function updateTableNote(noteId, editable) {
+            const note = notes.find(n => n.id === noteId);
+            if (note) {
+                note.content = editable.innerHTML;
+                save();
+            }
+        }
+        
+        function handleTableNoteKeydown(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+            }
+        }
+
+        function formatDate(timestamp) {
+            const date = new Date(timestamp);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        }
+
+        function renderCommentText(text) {
+            const escaped = escapeHtml(text);
+            return escaped.replace(/\[img\](.*?)\[\/img\]/g, '<img src="表情包/$1" style="width: 100px; height: 100px; object-fit: cover; vertical-align: middle; border-radius: 8px;">');
+        }
+
+        window.toggleDone = id => {
+            const n = notes.find(x => x.id === id);
+            n.done = !n.done;
+            save();
+        };
+
+        window.togglePriority = id => {
+            const n = notes.find(x => x.id === id);
+            if (n.p === 1) n.p = 2;
+            else if (n.p === 2) n.p = 3;
+            else n.p = 1;
+            save();
+        };
+
+        window.toggleType = id => {
+            const n = notes.find(x => x.id === id);
+            n.type = n.type === 'short' ? 'long' : 'short';
+            save();
+        };
+
+        window.updateNote = (id, v) => {
+            const n = notes.find(x => x.id === id);
+            n.content = v.trim();
+            save();
+        };
+
+        window.addComment = id => {
+            const n = notes.find(x => x.id === id);
+            const input = document.getElementById('c_' + id);
+            
+            let text = '';
+            const children = input.childNodes;
+            children.forEach(child => {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    text += child.textContent;
+                } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'IMG') {
+                    const src = child.src;
+                    const imgName = src.split('/').pop();
+                    text += `[img]${imgName}[/img]`;
+                }
+            });
+            
+            text = text.trim();
+            if (!text) return;
+            
+            if (!n.comments) n.comments = [];
+            n.comments.push({ text: text, time: Date.now() });
+            input.innerHTML = '';
+            input.setAttribute('data-has-content', 'false');
+            save();
+        };
+
+        window.deleteComment = (noteId, commentIndex) => {
+            const n = notes.find(x => x.id === noteId);
+            if (n && n.comments) {
+                n.comments.splice(commentIndex, 1);
+                save();
+            }
+        };
+
+        window.toggleComment = (noteId) => {
+            const commentArea = document.getElementById(`commentArea_${noteId}`);
+            const emojiPanel = document.getElementById(`emoji_${noteId}`);
+            
+            if (commentArea.style.display === 'none' || commentArea.style.display === '') {
+                commentArea.style.display = 'flex';
+            } else {
+                commentArea.style.display = 'none';
+                emojiPanel.classList.remove('show');
+            }
+        };
+
+        window.toggleEmojiPanel = (noteId) => {
+            const panel = document.getElementById(`emoji_${noteId}`);
+            panel.classList.toggle('show');
+        };
+
+        window.insertEmoji = (inputId, noteId, imgName) => {
+            const input = document.getElementById(inputId);
+            const panel = document.getElementById(`emoji_${noteId}`);
+
+            const img = document.createElement('img');
+            img.src = `表情包/${imgName}`;
+            img.className = 'preview-img';
+            img.alt = '[img]';
+            
+            img.onclick = (e) => {
+                e.stopPropagation();
+                img.remove();
+                updateInputPlaceholder(input);
+            };
+            
+            input.appendChild(img);
+            input.focus();
+            input.setAttribute('data-has-content', 'true');
+
+            panel.classList.remove('show');
+        };
+
+        function updateInputPlaceholder(el) {
+            if (!el.innerText.trim() && el.querySelectorAll('img').length === 0) {
+                el.setAttribute('data-has-content', 'false');
+            } else {
+                el.setAttribute('data-has-content', 'true');
+            }
+        }
+
+        window.handleNoteKeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('addNoteBtn').click();
+            }
+        };
+
+        window.handleCommentKeydown = (e, noteId) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                addComment(noteId);
+            }
+        };
+
+        window.deleteNote = id => {
+            notes = notes.filter(x => x.id !== id);
+            save();
+        };
+
+        document.getElementById('addNoteBtn').onclick = () => {
+            const noteInput = document.getElementById('noteInput');
+            const c = noteInput.innerHTML.trim();
+            if (!c || c === '<br>' || c.startsWith('<div><br></div>')) return;
+            notes.unshift({
+                id: Date.now(),
+                content: c,
+                done: false,
+                p: currentPriority,
+                type: currentType,
+                comments: [],
+                ts: Date.now()
+            });
+            save();
+            noteInput.innerHTML = '';
+            if (currentView === 'table') {
+                renderTable();
+            }
+        };
+        
+        // 处理输入框粘贴图片
+        document.getElementById('noteInput').addEventListener('paste', async (e) => {
+            e.preventDefault();
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Data = reader.result;
+                            const img = document.createElement('img');
+                            img.src = base64Data;
+                            img.style.maxWidth = '100%';
+                            img.style.maxHeight = '200px';
+                            img.style.objectFit = 'contain';
+                            img.style.borderRadius = '8px';
+                            img.style.margin = '4px 0';
+                            
+                            document.getElementById('noteInput').appendChild(img);
+                        };
+                        reader.readAsDataURL(blob);
+                    }
+                } else if (item.kind === 'string' && item.type === 'text/plain') {
+                    item.getAsString((text) => {
+                        const sel = window.getSelection();
+                        if (sel.rangeCount > 0) {
+                            const range = sel.getRangeAt(0);
+                            range.deleteContents();
+                            range.insertNode(document.createTextNode(text));
+                        }
+                    });
+                }
+            }
+        });
+        
+        // 处理输入框回车添加笔记
+        document.getElementById('noteInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('addNoteBtn').click();
+            }
+        });
+
+        document.getElementById('exportBtn').onclick = () => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(notes, null, 2)]));
+            a.download = 'notes.json';
+            a.click();
+        };
+
+        let isCleanMode = false;
+        let pulseEnabled = true;
+
+        document.getElementById('pulseToggle').onchange = (e) => {
+            pulseEnabled = e.target.checked;
+            const timeText = document.getElementById('timeText');
+            if (pulseEnabled) {
+                timeText.classList.remove('no-pulse');
+            } else {
+                timeText.classList.add('no-pulse');
+            }
+            localStorage.setItem('pulseEnabled', pulseEnabled);
+        };
+
+        const savedPulse = localStorage.getItem('pulseEnabled');
+        if (savedPulse !== null) {
+            pulseEnabled = savedPulse === 'true';
+            document.getElementById('pulseToggle').checked = pulseEnabled;
+            if (!pulseEnabled) {
+                document.getElementById('timeText').classList.add('no-pulse');
+            }
+        }
+
+        // 获取当前字体大小系数（保持向后兼容）
+        function getFontSizeFactor() {
+            const savedFontSize = localStorage.getItem('timerFontSize');
+            if (savedFontSize) {
+                return parseInt(savedFontSize) / 100;
+            }
+            if (isCleanMode) {
+                const savedCleanSize = localStorage.getItem('cleanFontSize');
+                return savedCleanSize ? parseInt(savedCleanSize) / 100 : 1;
+            }
+            const savedNormalSize = localStorage.getItem('normalFontSize');
+            return savedNormalSize ? parseInt(savedNormalSize) / 100 : 1;
+        }
+        
+        // 获取当前模式标签大小系数
+        function getModeLabelSizeFactor() {
+            const savedModeLabelSize = localStorage.getItem('modeLabelSize');
+            return savedModeLabelSize ? parseInt(savedModeLabelSize) / 100 : 1;
+        }
+        
+        document.getElementById('toggleCleanMode').onclick = () => {
+            isCleanMode = !isCleanMode;
+            const notesContainer = document.querySelector('.notes-container');
+            const toggleBtn = document.getElementById('toggleCleanMode');
+            const container = document.querySelector('.container');
+            const clearNotesBtn = document.getElementById('clearNotes');
+            const exportBtn = document.getElementById('exportBtn');
+            const timeText = document.getElementById('timeText');
+            const modeText = document.getElementById('modeText');
+            const modeLabelSize = getModeLabelSizeFactor();
+            
+            if (isCleanMode) {
+                notesContainer.style.display = 'none';
+                toggleBtn.innerText = '完整模式';
+                container.classList.add('clean-mode');
+                clearNotesBtn.style.display = 'none';
+                exportBtn.style.display = 'none';
+                modeText.style.fontSize = (24 * modeLabelSize) + 'px';
+                if (!pulseEnabled) {
+                    timeText.classList.add('no-pulse');
+                }
+            } else {
+                notesContainer.style.display = 'block';
+                toggleBtn.innerText = '纯净模式';
+                container.classList.remove('clean-mode');
+                clearNotesBtn.style.display = 'inline-block';
+                exportBtn.style.display = 'inline-block';
+                modeText.style.fontSize = (24 * modeLabelSize) + 'px';
+                timeText.classList.remove('no-pulse');
+            }
+            updateTimerFontSize();
+            updateGlowEffect();
+            localStorage.setItem('cleanMode', isCleanMode ? 'true' : 'false');
+        };
+
+        document.getElementById('clearNotes').onclick = () => {
+            if (confirm('确定清空所有笔记？不可恢复！')) {
+                notes = [];
+                save();
+            }
+        };
+
+        document.getElementById('switchBtn').onclick = () => {
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('toggle-mode');
+                } catch(e) {}
+            }
+        };
+
+        function handleToggleMode() {
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('toggle-mode');
+                } catch(e) {}
+            }
+        }
+
+        const floatLockBtn = document.getElementById('floatLockBtn');
+        
+        // 锁定按钮点击
+        floatLockBtn.onclick = () => {
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('toggle-float-lock');
+                } catch(e) {}
+            }
+        };
+
+        if (typeof require !== 'undefined') {
+            try {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.on('toggle-mode', handleToggleMode);
+                ipcRenderer.on('toggle-timer', toggleTimer);
+                ipcRenderer.on('get-timer-status', (event) => {
+                    ipcRenderer.send('get-timer-status');
+                });
+                ipcRenderer.on('timer-status', (event, status) => {
+                    isWorking = status.isWorking;
+                    currentTime = status.currentTime;
+                    updateTimeDisplay();
+                    modeText.innerText = status.isWorking ? '工作时间' : '休息时间';
+                    document.getElementById('startBtn').innerText = status.isRunning ? '暂停' : '开始';
+                });
+                ipcRenderer.on('timer-end', (event, data) => {
+                    playEndSound();
+                    const msg = data.isWorking ? "工作结束啦" : "休息结束啦";
+                    const tip = document.createElement('div');
+                    tip.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#ff3366;color:#fff;padding:30px 50px;border-radius:12px;font-size:24px;z-index:99999';
+                    tip.innerText = msg;
+                    document.body.appendChild(tip);
+                    setTimeout(() => tip.remove(), 3000);
+                });
+                ipcRenderer.on('set-timer-time', (event, data) => {
+                    currentTime = data.minutes * 60 + data.seconds;
+                    updateTimeDisplay();
+                });
+                
+                // 悬浮窗打开时显示锁定按钮
+                ipcRenderer.on('float-window-opened', () => {
+                    floatLockBtn.style.display = 'inline-block';
+                    // 请求当前锁定状态
+                    ipcRenderer.send('get-float-locked');
+                });
+                
+                // 悬浮窗关闭时隐藏锁定按钮
+                ipcRenderer.on('float-window-closed', () => {
+                    floatLockBtn.style.display = 'none';
+                });
+                
+                // 锁定状态改变时更新按钮
+                ipcRenderer.on('float-locked-status', (event, isLocked) => {
+                    floatLockBtn.innerText = isLocked ? '🔒' : '🔓';
+                });
+                
+                ipcRenderer.on('float-locked-changed', (event, isLocked) => {
+                    floatLockBtn.innerText = isLocked ? '🔒' : '🔓';
+                });
+                
+                // 监听全屏状态变化
+                ipcRenderer.on('fullscreen-status', (event, isFullscreen) => {
+                    const settingsBtn = document.getElementById('settingsBtn');
+                    if (isFullscreen) {
+                        settingsBtn.style.display = 'none';
+                    } else {
+                        settingsBtn.style.display = 'flex';
+                    }
+                });
+            } catch(e) {}
+        }
+
+        // 备用的纯JS计时器（用于测试）
+        let localTimer = null;
+        
+        function localToggleTimer() {
+            console.log('🔘 开始/暂停按钮被点击');
+            const startBtn = document.getElementById('startBtn');
+            
+            if (localTimer) {
+                clearInterval(localTimer);
+                localTimer = null;
+                startBtn.innerText = '开始';
+                console.log('⏸️ 计时器已暂停');
+            } else {
+                localTimer = setInterval(() => {
+                    currentTime--;
+                    if (currentTime <= 0) {
+                        clearInterval(localTimer);
+                        localTimer = null;
+                        isWorking = !isWorking;
+                        currentTime = isWorking ? WORK_TIME : REST_TIME;
+                        modeText.innerText = isWorking ? '工作时间' : '休息时间';
+                        startBtn.innerText = '开始';
+                        playEndSound();
+                    }
+                    updateTimeDisplay();
+                }, 1000);
+                startBtn.innerText = '暂停';
+                console.log('▶️ 计时器已启动');
+            }
+        }
+        
+        // 修改按钮绑定，添加调试
+        document.getElementById('startBtn').onclick = () => {
+            console.log('🎯 开始按钮被点击');
+            if (isElectron) {
+                toggleTimer();
+            } else {
+                localToggleTimer();
+            }
+        };
+        
+        document.getElementById('saveTimeBtn').onclick = () => {
+            console.log('💾 保存按钮被点击');
+            const minutes = parseInt(document.getElementById('min').textContent);
+            const seconds = parseInt(document.getElementById('sec').textContent);
+            const totalSeconds = minutes * 60 + seconds;
+            
+            if (isElectron) {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('save-default-time', {
+                        isWorking: isWorking,
+                        time: totalSeconds
+                    });
+                } catch(e) {
+                    console.error('Electron IPC错误:', e);
+                }
+            }
+            
+            // 显示提示（总是显示）
+            const tip = document.createElement('div');
+            tip.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#28a745;color:#fff;padding:20px 40px;border-radius:12px;font-size:20px;z-index:99999';
+            tip.innerText = isWorking ? `工作时间已设为 ${minutes}分${seconds}秒` : `休息时间已设为 ${minutes}分${seconds}秒`;
+            document.body.appendChild(tip);
+            setTimeout(() => tip.remove(), 2000);
+        };
+        
+        // 切换按钮
+        document.getElementById('switchBtn').onclick = () => {
+            console.log('🔄 切换按钮被点击');
+            if (isElectron) {
+                handleToggleMode();
+            } else {
+                isWorking = !isWorking;
+                currentTime = isWorking ? WORK_TIME : REST_TIME;
+                modeText.innerText = isWorking ? '工作时间' : '休息时间';
+                updateTimeDisplay();
+            }
+        };
+        
+        // 悬浮窗按钮
+        document.getElementById('openFloatBtn').onclick = () => {
+            console.log('🪟 悬浮窗按钮被点击');
+            if (!isElectron) {
+                alert('⚠️ 悬浮窗功能需要在Electron环境中运行！\n请使用 npm start 命令启动应用');
+                return;
+            }
+            // 原有逻辑保持不变
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('toggle-float-window');
+                    return;
+                } catch(e) {
+                    console.error('悬浮窗错误:', e);
+                }
+            }
+        };
+        let currentSort = 'time_asc';
+        let currentFilter = 'all';
+        
+        let sortBy = 'time';
+        let sortOrder = 'asc';
+        
+        document.getElementById('filterToggle').onclick = () => {
+            const menu = document.getElementById('filterMenu');
+            menu.classList.toggle('show');
+        };
+        
+        document.addEventListener('click', (e) => {
+            const filterDropdown = document.querySelector('.filter-dropdown');
+            if (!filterDropdown.contains(e.target)) {
+                document.getElementById('filterMenu').classList.remove('show');
+            }
+        });
+        
+        // 存储每个排序字段的方向
+        let sortDirections = {
+            time: 'asc',
+            priority: 'asc',
+            done: 'asc'
+        };
+        
+        // 加载保存的排序方向
+        const savedSortDirections = localStorage.getItem('sortDirections');
+        if (savedSortDirections) {
+            try {
+                sortDirections = JSON.parse(savedSortDirections);
+            } catch(e) {}
+        }
+        
+        function toggleSort(field) {
+            // 切换当前字段的排序方向
+            sortDirections[field] = sortDirections[field] === 'asc' ? 'desc' : 'asc';
+            // 保存排序方向
+            localStorage.setItem('sortDirections', JSON.stringify(sortDirections));
+            
+            const sortNames = {
+                'time': '时间',
+                'priority': '紧急',
+                'done': '未完成'
+            };
+            
+            // 更新所有按钮的显示状态
+            document.querySelectorAll('.sort-btn').forEach(btn => {
+                const btnField = btn.id.replace('sort', '').toLowerCase();
+                const direction = sortDirections[btnField];
+                const orderText = direction === 'asc' ? '↑' : '↓';
+                
+                // 更新按钮类名
+                if (direction === 'desc') {
+                    btn.classList.add('desc');
+                } else {
+                    btn.classList.remove('desc');
+                }
+                
+                btn.innerHTML = sortNames[btnField] + ' <span>' + orderText + '</span>';
+            });
+            
+            render();
+            if (currentView === 'table') renderTable();
+        }
+        
+        document.getElementById('sortTime').onclick = () => toggleSort('time');
+        document.getElementById('sortPriority').onclick = () => toggleSort('priority');
+        document.getElementById('sortDone').onclick = () => toggleSort('done');
+        
+        function updateFilter(filter) {
+            currentFilter = filter;
+            // 保存筛选状态
+            localStorage.setItem('currentFilter', filter);
+            
+            const toggleBtn = document.getElementById('filterToggle');
+            const filterNames = {
+                'all': '全部',
+                'undone': '未完成',
+                'done': '已完成',
+                'p3': '紧急',
+                'p2': '中等',
+                'p1': '不紧急'
+            };
+            toggleBtn.textContent = '筛选: ' + filterNames[filter] + ' ▼';
+            
+            document.querySelectorAll('.filter-option').forEach(b => b.classList.remove('active'));
+            document.getElementById('filter' + (filter === 'all' ? 'All' : filter === 'undone' ? 'Undone' : filter === 'done' ? 'Done' : 'P' + filter.charAt(1).toUpperCase())).classList.add('active');
+            
+            document.getElementById('filterMenu').classList.remove('show');
+            render();
+            if (currentView === 'table') renderTable();
+        }
+        
+        document.getElementById('filterAll').onclick = () => updateFilter('all');
+        document.getElementById('filterUndone').onclick = () => updateFilter('undone');
+        document.getElementById('filterDone').onclick = () => updateFilter('done');
+        document.getElementById('filterP3').onclick = () => updateFilter('p3');
+        document.getElementById('filterP2').onclick = () => updateFilter('p2');
+        document.getElementById('filterP1').onclick = () => updateFilter('p1');
+
+        document.querySelectorAll('.priority-btn').forEach(b => {
+            b.onclick = () => {
+                document.querySelectorAll('.priority-btn').forEach(x => x.classList.remove('active'));
+                b.classList.add('active');
+                currentPriority = +b.dataset.p;
+            };
+        });
+
+        document.querySelectorAll('.type-btn').forEach(b => {
+            b.onclick = () => {
+                document.querySelectorAll('.type-btn').forEach(x => x.classList.remove('active'));
+                b.classList.add('active');
+                currentType = b.dataset.type;
+            };
+        });
+
+        updateTimeDisplay();
+        
+        // 加载保存的筛选状态
+        const savedFilter = localStorage.getItem('currentFilter');
+        if (savedFilter) {
+            currentFilter = savedFilter;
+            // 更新筛选按钮显示
+            const filterNames = {
+                'all': '全部',
+                'undone': '未完成',
+                'done': '已完成',
+                'p3': '紧急',
+                'p2': '中等',
+                'p1': '不紧急'
+            };
+            document.getElementById('filterToggle').textContent = '筛选: ' + filterNames[currentFilter] + ' ▼';
+            document.querySelectorAll('.filter-option').forEach(b => b.classList.remove('active'));
+            document.getElementById('filter' + (currentFilter === 'all' ? 'All' : currentFilter === 'undone' ? 'Undone' : currentFilter === 'done' ? 'Done' : 'P' + currentFilter.charAt(1).toUpperCase())).classList.add('active');
+        }
+        
+        // 初始化排序按钮显示
+        const sortNames = {
+            'time': '时间',
+            'priority': '紧急',
+            'done': '未完成'
+        };
+        document.querySelectorAll('.sort-btn').forEach(btn => {
+            const btnField = btn.id.replace('sort', '').toLowerCase();
+            const direction = sortDirections[btnField];
+            const orderText = direction === 'asc' ? '↑' : '↓';
+            
+            if (direction === 'desc') {
+                btn.classList.add('desc');
+            } else {
+                btn.classList.remove('desc');
+            }
+            
+            btn.innerHTML = sortNames[btnField] + ' <span>' + orderText + '</span>';
+        });
+        
+        render();
+        // 如果是表格视图，同时渲染表格
+        if (currentView === 'table') {
+            renderTable();
+        }
+
+        const savedCleanMode = localStorage.getItem('cleanMode');
+        if (savedCleanMode === 'true') {
+            document.getElementById('toggleCleanMode').click();
+        }
+
+        const bgContainer = document.getElementById('bgContainer');
+        const bgOverlay = document.getElementById('bgOverlay');
+        const bgSelector = document.getElementById('bgSelector');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsPanel = document.getElementById('settingsPanel');
+        const darknessSlider = document.getElementById('darknessSlider');
+
+        let bgImages = [];
+        let currentBgIndex = 0;
+        let bgElements = [];
+
+        // 初始化背景图片
+        async function initBgImages() {
+            console.log('开始初始化背景图片');
+            
+            const { ipcRenderer } = require('electron');
+            
+            // 从主进程获取背景图片列表
+            bgImages = await ipcRenderer.invoke('get-background-images');
+            console.log('获取到背景图片:', bgImages.length, '张');
+            
+            bgImages.forEach((img, i) => {
+                let imgUrl;
+                if (img.isCustom) {
+                    imgUrl = img.dataUrl; // 使用data URL
+                } else {
+                    imgUrl = `Draws/${img.name}`;
+                }
+                console.log('加载背景图片:', i, imgUrl.substring(0, 50) + '...', 'custom:', img.isCustom);
+                
+                const div = document.createElement('div');
+                div.className = 'bg-image' + (i === 0 ? ' active' : '');
+                div.style.backgroundImage = `url('${imgUrl}')`;
+                bgContainer.insertBefore(div, bgOverlay);
+                bgElements.push(div);
+
+                const thumbContainer = document.createElement('div');
+                thumbContainer.className = 'bg-thumb-container';
+                thumbContainer.style.position = 'relative';
+                
+                const thumb = document.createElement('div');
+                thumb.className = 'bg-thumb' + (i === 0 ? ' active' : '');
+                thumb.style.backgroundImage = `url('${imgUrl}')`;
+                thumb.onclick = () => switchBg(i);
+                thumbContainer.appendChild(thumb);
+                
+                // 如果是自定义背景，添加删除按钮
+                if (img.isCustom) {
+                    const deleteBtn = document.createElement('div');
+                    deleteBtn.textContent = '✕';
+                    deleteBtn.style.cssText = `
+                        position: absolute;
+                        top: 2px;
+                        right: 2px;
+                        width: 18px;
+                        height: 18px;
+                        background: rgba(255, 59, 48, 0.9);
+                        color: white;
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 12px;
+                        cursor: pointer;
+                        z-index: 10;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                    `;
+                    deleteBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteBgImage(i, img.name);
+                    };
+                    thumbContainer.appendChild(deleteBtn);
+                }
+                
+                bgSelector.appendChild(thumbContainer);
+            });
+        }
+
+        // 删除自定义背景图片
+        async function deleteBgImage(index, fileName) {
+            console.log('删除背景图片:', index, fileName);
+            
+            if (!confirm('确定要删除这个背景图片吗？')) {
+                return;
+            }
+            
+            const { ipcRenderer } = require('electron');
+            
+            ipcRenderer.once('delete-background-image-result', (event, result) => {
+                if (result.success) {
+                    console.log('删除成功');
+                    // 重新初始化背景
+                    bgContainer.innerHTML = '';
+                    bgContainer.appendChild(bgOverlay);
+                    bgSelector.innerHTML = '';
+                    bgElements = [];
+                    currentBgIndex = 0;
+                    initBgImages();
+                } else {
+                    console.error('删除失败:', result.error);
+                    alert('删除失败：' + result.error);
+                }
+            });
+            
+            ipcRenderer.send('delete-background-image', fileName);
+        }
+
+        function switchBg(index) {
+            bgElements[currentBgIndex].classList.remove('active');
+            bgElements[index].classList.add('active');
+            
+            // 更新缩略图的active状态
+            const allThumbs = bgSelector.querySelectorAll('.bg-thumb');
+            if (allThumbs[currentBgIndex]) allThumbs[currentBgIndex].classList.remove('active');
+            if (allThumbs[index]) allThumbs[index].classList.add('active');
+            
+            currentBgIndex = index;
+            // 保存背景索引
+            localStorage.setItem('currentBgIndex', index);
+            // 清除自定义背景
+            localStorage.removeItem('customBg');
+            bgContainer.style.backgroundImage = '';
+        }
+
+        // 先初始化，然后在DOM加载完成后恢复
+        let bgInitPromise = initBgImages();
+
+        const darknessValue = document.getElementById('darknessValue');
+        
+        darknessSlider.oninput = () => {
+            bgOverlay.style.background = `rgba(0, 0, 0, ${darknessSlider.value / 100})`;
+            darknessValue.textContent = darknessSlider.value + '%';
+            localStorage.setItem('darknessLevel', darknessSlider.value);
+        };
+        
+        const savedDarkness = localStorage.getItem('darknessLevel');
+        if (savedDarkness) {
+            darknessSlider.value = savedDarkness;
+            darknessValue.textContent = savedDarkness + '%';
+            bgOverlay.style.background = `rgba(0, 0, 0, ${savedDarkness / 100})`;
+        }
+
+        // 等待背景初始化完成后恢复选择
+        bgInitPromise.then(() => {
+            // 加载自定义背景
+            const savedCustomBg = localStorage.getItem('customBg');
+            const savedBgIndex = localStorage.getItem('currentBgIndex');
+            if (savedCustomBg) {
+                bgContainer.style.backgroundImage = `url(${savedCustomBg})`;
+                bgContainer.style.backgroundSize = 'cover';
+                bgContainer.style.backgroundPosition = 'center';
+                // 隐藏默认背景图片
+                bgElements.forEach(el => el.classList.remove('active'));
+            } else if (savedBgIndex) {
+                // 如果有保存的背景索引，恢复它
+                const bgIndex = parseInt(savedBgIndex);
+                if (bgIndex >= 0 && bgIndex < bgElements.length) {
+                    switchBg(bgIndex);
+                }
+            }
+        });
+
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeValue = document.getElementById('volumeValue');
+        
+        volumeSlider.oninput = () => {
+            const volume = volumeSlider.value / 100;
+            volumeValue.textContent = volumeSlider.value + '%';
+            
+            if (workAudio) workAudio.volume = volume;
+            if (restAudio) restAudio.volume = volume;
+            
+            localStorage.setItem('timerVolume', volumeSlider.value);
+        };
+        
+        const savedVolume = localStorage.getItem('timerVolume');
+        if (savedVolume) {
+            volumeSlider.value = savedVolume;
+            volumeValue.textContent = savedVolume + '%';
+            const volume = parseInt(savedVolume) / 100;
+            if (workAudio) workAudio.volume = volume;
+            if (restAudio) restAudio.volume = volume;
+        }
+
+        // 完整模式文字大小设置
+        const normalFontSizeSlider = document.getElementById('normalFontSizeSlider');
+        const normalFontSizeValue = document.getElementById('normalFontSizeValue');
+        
+        const updateTimerFontSize = () => {
+            const timeText = document.getElementById('timeText');
+            const normalSize = normalFontSizeSlider.value / 100;
+            const cleanSize = cleanFontSizeSlider.value / 100;
+            
+            if (isCleanMode) {
+                timeText.style.fontSize = (200 * cleanSize) + 'px';
+            } else {
+                timeText.style.fontSize = (100 * normalSize) + 'px';
+            }
+        };
+        
+        normalFontSizeSlider.oninput = () => {
+            normalFontSizeValue.textContent = normalFontSizeSlider.value + '%';
+            localStorage.setItem('normalFontSize', normalFontSizeSlider.value);
+            updateTimerFontSize();
+        };
+        
+        const savedNormalFontSize = localStorage.getItem('normalFontSize');
+        if (savedNormalFontSize) {
+            normalFontSizeSlider.value = savedNormalFontSize;
+            normalFontSizeValue.textContent = savedNormalFontSize + '%';
+        }
+        
+        // 纯净模式文字大小设置
+        const cleanFontSizeSlider = document.getElementById('cleanFontSizeSlider');
+        const cleanFontSizeValue = document.getElementById('cleanFontSizeValue');
+        
+        cleanFontSizeSlider.oninput = () => {
+            cleanFontSizeValue.textContent = cleanFontSizeSlider.value + '%';
+            localStorage.setItem('cleanFontSize', cleanFontSizeSlider.value);
+            updateTimerFontSize();
+        };
+        
+        const savedCleanFontSize = localStorage.getItem('cleanFontSize');
+        if (savedCleanFontSize) {
+            cleanFontSizeSlider.value = savedCleanFontSize;
+            cleanFontSizeValue.textContent = savedCleanFontSize + '%';
+        }
+        
+        // 模式标签大小设置
+        const modeLabelSizeSlider = document.getElementById('modeLabelSizeSlider');
+        const modeLabelSizeValue = document.getElementById('modeLabelSizeValue');
+        
+        const updateModeLabelSize = (sizePercent) => {
+            const modeText = document.getElementById('modeText');
+            const size = (24 * sizePercent / 100);
+            modeText.style.fontSize = size + 'px';
+        };
+        
+        modeLabelSizeSlider.oninput = () => {
+            modeLabelSizeValue.textContent = modeLabelSizeSlider.value + '%';
+            localStorage.setItem('modeLabelSize', modeLabelSizeSlider.value);
+            updateModeLabelSize(modeLabelSizeSlider.value);
+        };
+        
+        const savedModeLabelSize = localStorage.getItem('modeLabelSize');
+        if (savedModeLabelSize) {
+            modeLabelSizeSlider.value = savedModeLabelSize;
+            modeLabelSizeValue.textContent = savedModeLabelSize + '%';
+            updateModeLabelSize(savedModeLabelSize);
+        }
+        
+        // 显示模式标签设置
+        const showModeLabel = document.getElementById('showModeLabel');
+        showModeLabel.onchange = () => {
+            const modeText = document.getElementById('modeText');
+            modeText.style.display = showModeLabel.checked ? 'block' : 'none';
+            localStorage.setItem('showModeLabel', showModeLabel.checked ? 'true' : 'false');
+        };
+        
+        const savedShowModeLabel = localStorage.getItem('showModeLabel');
+        if (savedShowModeLabel !== null) {
+            showModeLabel.checked = savedShowModeLabel === 'true';
+            const modeText = document.getElementById('modeText');
+            modeText.style.display = showModeLabel.checked ? 'block' : 'none';
+        }
+
+        window.toggleCollapsible = (id) => {
+            const content = document.getElementById(id + 'Container');
+            const arrow = document.getElementById(id + 'Arrow');
+            content.classList.toggle('show');
+            arrow.textContent = content.classList.contains('show') ? '▲' : '▼';
+        };
+
+        const timerColorPicker = document.getElementById('timerColorPicker');
+        const glowEnabled = document.getElementById('glowEnabled');
+        const glowColorPicker = document.getElementById('glowColorPicker');
+        const glowIntensitySlider = document.getElementById('glowIntensitySlider');
+        const glowIntensityValue = document.getElementById('glowIntensityValue');
+        const shadowColorPicker = document.getElementById('shadowColorPicker');
+        const shadowSizeSlider = document.getElementById('shadowSizeSlider');
+        const shadowSizeValue = document.getElementById('shadowSizeValue');
+
+        // 更新发光效果显示 - 直接修改样式
+        const updateGlowEffect = () => {
+            const timeEl = document.querySelector('.time');
+            if (glowEnabled.checked) {
+                const color = glowColorPicker.value;
+                const intensity = glowIntensitySlider.value;
+                timeEl.style.textShadow = `0 0 ${intensity}px ${color}, 0 0 ${intensity * 2}px ${color}`;
+            } else {
+                timeEl.style.textShadow = 'none';
+            }
+        };
+
+        timerColorPicker.oninput = () => {
+            const color = timerColorPicker.value;
+            document.querySelector('.time').style.color = color;
+            localStorage.setItem('timerColor', color);
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-timer-color', color);
+                } catch(e) {}
+            }
+        };
+
+        const savedTimerColor = localStorage.getItem('timerColor');
+        if (savedTimerColor) {
+            timerColorPicker.value = savedTimerColor;
+            document.querySelector('.time').style.color = savedTimerColor;
+        }
+
+        glowEnabled.onchange = () => {
+            updateGlowEffect();
+            localStorage.setItem('glowEnabled', glowEnabled.checked ? 'true' : 'false');
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-glow-enabled', glowEnabled.checked);
+                } catch(e) {}
+            }
+        };
+
+        const savedGlowEnabled = localStorage.getItem('glowEnabled');
+        if (savedGlowEnabled !== null) {
+            glowEnabled.checked = savedGlowEnabled === 'true';
+        }
+
+        glowColorPicker.oninput = () => {
+            const color = glowColorPicker.value;
+            localStorage.setItem('glowColor', color);
+            updateGlowEffect();
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-glow-color', color);
+                } catch(e) {}
+            }
+        };
+
+        const savedGlowColor = localStorage.getItem('glowColor');
+        if (savedGlowColor) {
+            glowColorPicker.value = savedGlowColor;
+        }
+
+        glowIntensitySlider.oninput = () => {
+            const intensity = glowIntensitySlider.value;
+            glowIntensityValue.textContent = intensity + '%';
+            localStorage.setItem('glowIntensity', intensity);
+            updateGlowEffect();
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-glow-intensity', intensity);
+                } catch(e) {}
+            }
+        };
+
+        const savedGlowIntensity = localStorage.getItem('glowIntensity');
+        if (savedGlowIntensity) {
+            glowIntensitySlider.value = savedGlowIntensity;
+            glowIntensityValue.textContent = savedGlowIntensity + '%';
+        }
+
+        shadowColorPicker.oninput = () => {
+            const color = shadowColorPicker.value;
+            localStorage.setItem('shadowColor', color);
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-shadow-color', color);
+                } catch(e) {}
+            }
+        };
+
+        const savedShadowColor = localStorage.getItem('shadowColor');
+        if (savedShadowColor) {
+            shadowColorPicker.value = savedShadowColor;
+        }
+
+        shadowSizeSlider.oninput = () => {
+            const size = shadowSizeSlider.value;
+            shadowSizeValue.textContent = size + '%';
+            localStorage.setItem('shadowSize', size);
+            if (typeof require !== 'undefined') {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.send('update-float-shadow-size', size);
+                } catch(e) {}
+            }
+        };
+
+        const savedShadowSize = localStorage.getItem('shadowSize');
+        if (savedShadowSize) {
+            shadowSizeSlider.value = savedShadowSize;
+            shadowSizeValue.textContent = savedShadowSize + '%';
+        }
+        
+        // 初始化应用当前字体大小和发光效果
+        updateTimerFontSize();
+        updateGlowEffect();
+
+        settingsBtn.onclick = (e) => {
+            e.stopPropagation();
+            settingsPanel.classList.toggle('show');
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+                settingsPanel.classList.remove('show');
+            }
+        });
+
+        window.toggleView = (viewType) => {
+            if (currentView === viewType) return;
+            
+            currentView = viewType;
+            localStorage.setItem('currentView', viewType);
+            
+            const cardBtn = document.querySelector('.view-toggle-btn:first-child');
+            const tableBtn = document.querySelector('.view-toggle-btn:last-child');
+            const notesList = document.getElementById('notesList');
+            const tableView = document.getElementById('tableView');
+            
+            if (viewType === 'card') {
+                cardBtn.classList.add('active');
+                tableBtn.classList.remove('active');
+                notesList.style.display = 'block';
+                tableView.classList.remove('active');
+            } else {
+                cardBtn.classList.remove('active');
+                tableBtn.classList.add('active');
+                notesList.style.display = 'none';
+                tableView.classList.add('active');
+                renderTable();
+            }
+        };
+
+        window.toggleTypeView = (type) => {
+            if (currentTypeView === type) return;
+            
+            currentTypeView = type;
+            localStorage.setItem('currentTypeView', type);
+            
+            // 更新按钮状态
+            document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+                if ((type === 'all' && btn.textContent === '全部') ||
+                    (type === 'short' && btn.textContent === '短期') ||
+                    (type === 'long' && btn.textContent === '长期')) {
+                    btn.classList.add('active');
+                }
+            });
+            
+            render();
+            if (currentView === 'table') renderTable();
+        };
+
+        // 恢复视图状态 - 必须在函数定义之后
+        const savedView = localStorage.getItem('currentView');
+        if (savedView === 'table') {
+            // 直接设置初始状态，避免调用toggleView可能带来的问题
+            currentView = 'table';
+            const cardBtn = document.querySelector('.view-toggle-btn:first-child');
+            const tableBtn = document.querySelector('.view-toggle-btn:last-child');
+            const notesList = document.getElementById('notesList');
+            const tableView = document.getElementById('tableView');
+            
+            cardBtn.classList.remove('active');
+            tableBtn.classList.add('active');
+            notesList.style.display = 'none';
+            tableView.classList.add('active');
+            renderTable();
+        }
+
+        // 恢复类型视图状态
+        const savedTypeView = localStorage.getItem('currentTypeView');
+        if (savedTypeView) {
+            currentTypeView = savedTypeView;
+            document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+                if ((savedTypeView === 'all' && btn.textContent === '全部') ||
+                    (savedTypeView === 'short' && btn.textContent === '短期') ||
+                    (savedTypeView === 'long' && btn.textContent === '长期')) {
+                    btn.classList.add('active');
+                }
+            });
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            
+            let filtered = [...notes];
+            
+            if (currentFilter === 'undone') filtered = filtered.filter(x => !x.done);
+            if (currentFilter === 'done') filtered = filtered.filter(x => x.done);
+            if (currentFilter === 'p3') filtered = filtered.filter(x => x.p === 3);
+            if (currentFilter === 'p2') filtered = filtered.filter(x => x.p === 2);
+            if (currentFilter === 'p1') filtered = filtered.filter(x => x.p === 1);
+            
+            // 类型过滤
+            if (currentTypeView === 'short') filtered = filtered.filter(x => x.type === 'short');
+            if (currentTypeView === 'long') filtered = filtered.filter(x => x.type === 'long');
+            
+            filtered.sort((a, b) => {
+                // 1. 先按完成状态排序：已完成的放下面
+                const aDone = a.done ? 1 : 0;
+                const bDone = b.done ? 1 : 0;
+                if (aDone !== bDone) {
+                    return aDone - bDone; // 未完成的在前面
+                }
+                
+                // 2. 再按优先级排序
+                let priorityResult = 0;
+                if (sortDirections.priority === 'asc') {
+                    priorityResult = a.p - b.p;
+                } else {
+                    priorityResult = b.p - a.p;
+                }
+                if (priorityResult !== 0) {
+                    return priorityResult;
+                }
+                
+                // 3. 最后按时间排序
+                if (sortDirections.time === 'asc') {
+                    return a.ts - b.ts;
+                } else {
+                    return b.ts - a.ts;
+                }
+            });
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666; padding: 20px;">暂无任务</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = filtered.map(n => {
+                // 给没有type字段的旧数据设置默认值
+                if (!n.type) n.type = 'short';
+                
+                const pColor = n.p === 1 ? '#4CAF50' : n.p === 2 ? '#FF9800' : '#f44336';
+                const pText = n.p === 1 ? '低' : n.p === 2 ? '中' : '高';
+                const doneColor = n.done ? '#4CAF50' : '#f44336';
+                const doneText = n.done ? '已完成' : '未完成';
+                const typeColor = n.type === 'short' ? '#2196F3' : '#9C27B0';
+                const typeText = n.type === 'short' ? '短期' : '长期';
+                
+                return `
+                    <tr data-note-id="${n.id}">
+                        <td class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容">${n.content}</td>
+                        <td><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
+                        <td><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
+                        <td><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
+                        <td style="font-size:12px;color:#888;">${formatDate(n.ts)}</td>
+                        <td>
+                            <button onclick="toggleDone(${n.id});renderTable();" style="background:rgba(76,175,80,0.2);border:none;color:#81c784;padding:5px 10px;border-radius:4px;cursor:pointer;margin-right:5px;">${n.done ? '撤销' : '完成'}</button>
+                            <button onclick="deleteNote(${n.id});renderTable();" style="background:rgba(244,67,54,0.2);border:none;color:#ef5350;padding:5px 10px;border-radius:4px;cursor:pointer;">删除</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        window.updateTableNote = (noteId, element) => {
+            const n = notes.find(x => x.id === noteId);
+            if (n) {
+                const newContent = element.innerHTML.trim();
+                if (newContent && newContent !== n.content) {
+                    n.content = newContent;
+                    save();
+                } else if (!newContent) {
+                    element.innerHTML = n.content;
+                }
+            }
+        };
+
+        const bgFileInput = document.getElementById('bgFileInput');
+        const importBgBtn = document.getElementById('importBgBtn');
+        
+        importBgBtn.onclick = () => {
+            bgFileInput.click();
+        };
+        
+        bgFileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                console.log('开始加载文件:', file.name, file.size);
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    const imgUrl = event.target.result;
+                    console.log('文件加载完成，数据长度:', imgUrl.length);
+                    
+                    // 保存图片到Draws文件夹
+                    const timestamp = Date.now();
+                    const ext = file.name.split('.').pop() || 'png';
+                    const fileName = `custom_bg_${timestamp}.${ext}`;
+                    
+                    // 通过主进程保存图片
+                    const { ipcRenderer } = require('electron');
+                    
+                    // 监听保存结果
+                    ipcRenderer.once('save-background-image-result', (event, result) => {
+                        if (result.success) {
+                            console.log('背景保存成功，路径:', result.filePath);
+                            
+                            // 重新初始化背景选择器
+                            bgContainer.innerHTML = '';
+                            bgContainer.appendChild(bgOverlay);
+                            bgSelector.innerHTML = '';
+                            bgElements = [];
+                            
+                            // 重新初始化并选中新添加的背景
+                            initBgImages().then(() => {
+                                // 找到新添加的背景索引（应该是最后一个）
+                                const newIndex = bgElements.length - 1;
+                                if (newIndex >= 0) {
+                                    switchBg(newIndex);
+                                }
+                            });
+                            
+                            alert('背景图片导入成功！');
+                        } else {
+                            console.error('背景保存失败:', result.error);
+                            alert('背景图片导入失败：' + result.error);
+                        }
+                    });
+                    
+                    ipcRenderer.send('save-background-image', { base64Data: imgUrl, fileName: fileName });
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+        
+        window.importMeme = (noteId) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const imgUrl = event.target.result;
+                        const img = document.createElement('img');
+                        img.src = imgUrl;
+                        img.className = 'preview-img';
+                        img.alt = '[img]';
+                        
+                        img.onclick = (e) => {
+                            e.stopPropagation();
+                            img.remove();
+                        };
+                        
+                        const commentInput = document.getElementById(`c_${noteId}`);
+                        commentInput.appendChild(img);
+                        commentInput.focus();
+                        commentInput.setAttribute('data-has-content', 'true');
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            input.click();
+        };
+    </script>
+</body>
+</html>

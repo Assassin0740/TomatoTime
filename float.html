@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html style="overflow: hidden; background: transparent;">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+            user-select: none;
+        }
+        html {
+            overflow: hidden;
+            background: transparent;
+        }
+        body {
+            background: transparent;
+            color: #fff;
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            -webkit-app-region: no-drag;
+        }
+        body.with-background {
+            background: rgba(20, 20, 30, 0.95);
+            border-radius: 8px;
+        }
+        #container {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        #label {
+            font-size: 12px;
+            color: #888;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+        body.with-background #label {
+            color: #888;
+        }
+        body:not(.with-background) #label {
+            color: rgba(255, 255, 255, 0.9);
+            text-shadow: 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5);
+        }
+        #time {
+            font-size: 40px;
+            font-weight: bold;
+            color: #fff;
+            letter-spacing: 2px;
+        }
+        #time.glow {
+            text-shadow: 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+        }
+        body:not(.with-background) #time.glow {
+            text-shadow: 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+        }
+        #edit-input {
+            font-size: 40px;
+            font-weight: bold;
+            color: #00a1d6;
+            background: rgba(0,0,0,0.5);
+            border: 2px solid #00a1d6;
+            border-radius: 4px;
+            padding: 4px 12px;
+            text-align: center;
+            width: 140px;
+            outline: none;
+            -webkit-app-region: no-drag;
+        }
+        #float-image {
+            position: absolute;
+            bottom: 5px;
+            max-width: 80%;
+            max-height: 30%;
+            display: none;
+        }
+    </style>
+</head>
+<body class="with-background">
+    <div id="container">
+        <div id="label">工作时间</div>
+        <div id="time" class="glow">25:00</div>
+        <img id="float-image" />
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        const timeEl = document.getElementById('time');
+        const labelEl = document.getElementById('label');
+        const floatImage = document.getElementById('float-image');
+        let withBackground = true;
+        let isLocked = false;
+        let shadowColor = '#000000';
+        let shadowSize = 20;
+        let glowColor = '#00a1d6';
+        let glowIntensity = 15;
+        let glowEnabled = true;
+
+        function updateShadowStyle({ color, size } = {}) {
+            if (color !== undefined) shadowColor = color;
+            if (size !== undefined) shadowSize = size;
+            timeEl.style.boxShadow = `0 0 ${shadowSize}px ${shadowColor}`;
+            labelEl.style.textShadow = `0 0 ${shadowSize/2}px ${shadowColor}, 0 0 ${shadowSize}px ${shadowColor}`;
+        }
+
+        function updateGlowStyle({ color, intensity, enabled } = {}) {
+            if (enabled !== undefined) {
+                glowEnabled = enabled;
+                if (glowEnabled) {
+                    timeEl.classList.add('glow');
+                } else {
+                    timeEl.classList.remove('glow');
+                }
+            }
+            if (color !== undefined) {
+                glowColor = color;
+                document.documentElement.style.setProperty('--glow-color', color);
+            }
+            if (intensity !== undefined) {
+                glowIntensity = parseInt(intensity);
+                document.documentElement.style.setProperty('--glow-intensity', glowIntensity + 'px');
+            }
+        }
+
+        updateShadowStyle();
+        updateGlowStyle();
+
+        // 根据窗口大小调整字体
+        function updateFontSize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const minSize = Math.min(width, height);
+            
+            // 时间字体占窗口高度的 50%
+            const timeFontSize = Math.max(20, minSize * 0.5);
+            // 标签字体占窗口高度的 15%
+            const labelFontSize = Math.max(8, minSize * 0.15);
+            
+            timeEl.style.fontSize = timeFontSize + 'px';
+            labelEl.style.fontSize = labelFontSize + 'px';
+            
+            // 如果有输入框，也调整
+            const editInput = document.getElementById('edit-input');
+            if (editInput) {
+                editInput.style.fontSize = timeFontSize + 'px';
+                editInput.style.width = (timeFontSize * 3.5) + 'px';
+            }
+        }
+        
+        window.addEventListener('resize', updateFontSize);
+        updateFontSize();
+        
+        ipcRenderer.on('time-update', (event, data) => {
+            labelEl.textContent = data.label;
+            timeEl.textContent = data.time;
+        });
+        
+        ipcRenderer.on('timer-status', (event, status) => {
+            const m = String(Math.floor(status.currentTime / 60)).padStart(2, '0');
+            const s = String(status.currentTime % 60).padStart(2, '0');
+            labelEl.textContent = status.isWorking ? '工作时间' : '休息时间';
+            timeEl.textContent = `${m}:${s}`;
+        });
+        
+        ipcRenderer.on('start-edit-time', () => {
+            if (!isLocked) {
+                startEdit();
+            }
+        });
+        
+        ipcRenderer.on('toggle-background', () => {
+            withBackground = !withBackground;
+            if (withBackground) {
+                document.body.classList.add('with-background');
+            } else {
+                document.body.classList.remove('with-background');
+            }
+        });
+        
+        ipcRenderer.on('set-locked', (event, locked) => {
+            isLocked = locked;
+        });
+
+        ipcRenderer.on('timer-color-update', (event, color) => {
+            timeEl.style.color = color;
+        });
+
+        ipcRenderer.on('shadow-style-update', (event, style) => {
+            if (style.color !== undefined) shadowColor = style.color;
+            if (style.size !== undefined) shadowSize = style.size;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('shadow-color-update', (event, color) => {
+            shadowColor = color;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('shadow-size-update', (event, size) => {
+            shadowSize = size;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('glow-enabled-update', (event, enabled) => {
+            updateGlowStyle({ enabled });
+        });
+
+        ipcRenderer.on('glow-color-update', (event, color) => {
+            updateGlowStyle({ color });
+        });
+
+        ipcRenderer.on('glow-intensity-update', (event, intensity) => {
+            updateGlowStyle({ intensity });
+        });
+
+        ipcRenderer.on('set-float-image', (event, dataUrl) => {
+            if (dataUrl) {
+                floatImage.src = dataUrl;
+                floatImage.style.display = 'block';
+                localStorage.setItem('floatImageData', dataUrl);
+            } else {
+                floatImage.style.display = 'none';
+                localStorage.removeItem('floatImageData');
+            }
+        });
+
+        function startEdit() {
+            const currentTime = timeEl.textContent;
+            const [min, sec] = currentTime.split(':');
+            const inputValue = min + sec;
+            
+            const input = document.createElement('input');
+            input.id = 'edit-input';
+            input.type = 'text';
+            input.value = inputValue;
+            input.maxLength = 6;
+            input.style.fontSize = timeEl.style.fontSize;
+            input.style.width = (parseFloat(timeEl.style.fontSize) * 3.5) + 'px';
+            
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    submitEdit(input);
+                } else if (e.key === 'Escape') {
+                    input.remove();
+                }
+            });
+            
+            input.addEventListener('blur', () => {
+                submitEdit(input);
+            });
+            
+            timeEl.replaceWith(input);
+            input.select();
+        }
+        
+        function submitEdit(input) {
+            const value = input.value.trim();
+            const numValue = parseInt(value);
+            
+            if (!isNaN(numValue) && numValue >= 0) {
+                let totalSeconds;
+                
+                if (value.length <= 2) {
+                    totalSeconds = numValue * 60;
+                } else if (value.length <= 4) {
+                    const minutes = parseInt(value.substring(0, value.length - 2));
+                    const seconds = parseInt(value.substring(value.length - 2));
+                    totalSeconds = minutes * 60 + seconds;
+                } else {
+                    const minutes = parseInt(value.substring(0, value.length - 2));
+                    const seconds = parseInt(value.substring(value.length - 2));
+                    totalSeconds = minutes * 60 + seconds;
+                }
+                
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                
+                ipcRenderer.send('set-timer-time', { minutes: minutes, seconds: seconds });
+            }
+            
+            input.replaceWith(timeEl);
+        }
+        
+        // 处理拖放图片
+        document.addEventListener('dragover', (e) => {
+            if (!isLocked) {
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('drop', (e) => {
+            if (!isLocked) {
+                e.preventDefault();
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    const file = files[0];
+                    if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const dataUrl = event.target.result;
+                            floatImage.src = dataUrl;
+                            floatImage.style.display = 'block';
+                            localStorage.setItem('floatImageData', dataUrl);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                }
+            }
+        });
+
+        // 加载保存的图片
+        const savedImage = localStorage.getItem('floatImageData');
+        if (savedImage) {
+            floatImage.src = savedImage;
+            floatImage.style.display = 'block';
+        }
+        
+        // 只有没锁定的时候才处理拖动和菜单
+        document.addEventListener('mousedown', function(e) {
+            if (!isLocked) {
+                ipcRenderer.send('float-mousedown', {
+                    button: e.button,
+                    screenX: e.screenX,
+                    screenY: e.screenY
+                });
+            }
+        });
+        
+        document.addEventListener('mousemove', function(e) {
+            if (!isLocked) {
+                ipcRenderer.send('float-mousemove', {
+                    screenX: e.screenX,
+                    screenY: e.screenY
+                });
+            }
+        });
+        
+        document.addEventListener('mouseup', function() {
+            if (!isLocked) {
+                ipcRenderer.send('float-mouseup');
+            }
+        });
+        
+        document.addEventListener('mouseleave', function() {
+            if (!isLocked) {
+                ipcRenderer.send('float-mouseup');
+            }
+        });
+        
+        document.addEventListener('contextmenu', function(e) {
+            if (!isLocked) {
+                e.preventDefault();
+                e.stopPropagation();
+                ipcRenderer.send('show-float-menu');
+            }
+        });
+        
+        ipcRenderer.send('get-timer-status');
+    </script>
+</body>
+</html>
