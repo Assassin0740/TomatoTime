@@ -2076,6 +2076,14 @@
 
         cancelBtn.onclick = hideImportDialog;
 
+        window.onerror = function(message, source, lineno, colno, error) {
+            alert("JS Error: " + message + " at line " + lineno + "\nSource: " + source);
+            return false;
+        };
+        window.addEventListener('unhandledrejection', function(event) {
+            alert("Unhandled Promise Rejection: " + event.reason);
+        });
+
         // 先初始化视图和类型相关的状态变量
         let currentView = localStorage.getItem('currentView') || 'card';
         let currentTypeView = localStorage.getItem('currentTypeView') || 'all';
@@ -2206,7 +2214,9 @@
 
         // 卡片分页加载状态
         let cardRenderLimit = 15;
+        let renderedCardCount = 0;
         let archiveRenderLimits = {}; // 格式为 { '2026-06-29': 15 }
+        let renderedArchiveCounts = {}; // 格式为 { '2026-06-29': 0 }
 
         // 列表滚动加载哨兵观察器
         let sentinelObserver = new IntersectionObserver((entries) => {
@@ -2217,12 +2227,12 @@
                     
                     if (sentinel.id === 'notesListSentinel') {
                         cardRenderLimit += 15;
-                        render();
+                        render(false);
                     } else if (sentinel.id.startsWith('archive_sentinel_')) {
                         const dateStr = sentinel.dataset.date;
                         if (!archiveRenderLimits[dateStr]) archiveRenderLimits[dateStr] = 15;
                         archiveRenderLimits[dateStr] += 15;
-                        renderArchiveGroupItems(dateStr);
+                        renderArchiveGroupItems(dateStr, null, false);
                     }
                 }
             });
