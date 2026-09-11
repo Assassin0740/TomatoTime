@@ -111,6 +111,7 @@ let currentTime = 25 * 60; // 默认25分钟
 let isWorking = true;
 let WORK_TIME = 25 * 60; // 工作时间（可配置）
 let REST_TIME = 10 * 60; // 休息时间（可配置）
+let autoStartNext = false; // 时间到点后是否自动开始下一阶段（由主窗口设置同步过来）
 
 // 获取当前计时器状态
 function getTimerStatus() {
@@ -153,17 +154,22 @@ function toggleTimer() {
             lastTime += elapsed * 1000; // 精准时间累积补偿，防止 setInterval 受负载/睡眠休眠导致的累计漂移误差
             
             if (currentTime <= 0) {
-                clearInterval(timerInterval);
-                timerInterval = null;
-                isTimerRunning = false;
-                
                 // 在切换状态之前发送结束通知，发送的是当前结束的状态
                 if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('timer-end', { isWorking: isWorking });
                 }
-                
+
                 isWorking = !isWorking;
                 currentTime = isWorking ? WORK_TIME : REST_TIME;
+
+                if (autoStartNext) {
+                    // 自动开始下一阶段：不动 interval，让它继续跑下去。
+                    // 注意这里不重置 lastTime，这样不足 1 秒的余量会被带到下一阶段，避免累积漂移。
+                } else {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                    isTimerRunning = false;
+                }
                 updateTrayMenu();
             }
         }
@@ -254,7 +260,6 @@ function toggleFloatWindow() {
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
-            enableRemoteModule: true,
             webSecurity: false,
             allowRunningInsecureContent: true
         },
@@ -398,7 +403,7 @@ function toggleFloatWindow() {
         }));
         menu.append(new MenuItem({ type: 'separator' }));
         menu.append(new MenuItem({
-            label: '🖼️ 选择图片',
+            label: '🖼️ 设置悬浮窗配图…',
             click: async () => {
                 const result = await dialog.showOpenDialog(floatWindow, {
                     filters: [
@@ -423,7 +428,7 @@ function toggleFloatWindow() {
             }
         }));
         menu.append(new MenuItem({
-            label: '🗑️ 清除图片',
+            label: '🗑️ 清除悬浮窗配图',
             click: () => {
                 if (floatWindow && !floatWindow.isDestroyed()) {
                     floatWindow.webContents.send('set-float-image', null);
@@ -586,7 +591,6 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
-            enableRemoteModule: true,
             webSecurity: false,
             allowRunningInsecureContent: true
         },
@@ -683,7 +687,7 @@ function createWindow() {
                         const { dialog } = require('electron');
                         dialog.showMessageBox({
                             title: '关于计时器',
-                            message: '专注计时器 v1.0.0\n\n一个帮助你保持专注的计时器应用。'
+                            message: `专注计时器 v${app.getVersion()}\n\n一个帮助你保持专注的计时器应用。`
                         });
                     }
                 }
@@ -830,6 +834,11 @@ function createWindow() {
             floatWindow.webContents.send('float-content-settings', settings);
             ensureFloatWindowFitsImages(settings);
         }
+    });
+
+    // 时间到点后是否自动开始下一阶段（由主窗口设置推送）
+    ipcMain.on('set-auto-start-next', (event, enabled) => {
+        autoStartNext = !!enabled;
     });
 
     ipcMain.on('toggle-mode', () => {

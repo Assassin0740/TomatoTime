@@ -189,12 +189,13 @@
             font-weight: bold;
             color: #fff;
             letter-spacing: 2px;
+            text-shadow: var(--text-shadow, 0 0 0 transparent);
         }
         #time.glow {
-            text-shadow: 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+            text-shadow: var(--text-shadow, 0 0 0 transparent), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
         }
         body:not(.with-background) #time.glow {
-            text-shadow: 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+            text-shadow: var(--text-shadow, 0 0 0 transparent), 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
         }
         #edit-input {
             font-size: 40px;
@@ -329,8 +330,14 @@
         function updateShadowStyle({ color, size } = {}) {
             if (color !== undefined) shadowColor = color;
             if (size !== undefined) shadowSize = size;
-            timeEl.style.boxShadow = `0 0 ${shadowSize}px ${shadowColor}`;
-            labelEl.style.textShadow = `0 0 ${shadowSize/2}px ${shadowColor}, 0 0 ${shadowSize}px ${shadowColor}`;
+            const s = parseInt(shadowSize, 10) || 0;
+            // 用真正的文字阴影（text-shadow），而不是 box-shadow —— 后者会在数字周围形成矩形光晕块
+            const textShadow = s > 0
+                ? `0 0 ${s / 2}px ${shadowColor}, 0 0 ${s}px ${shadowColor}`
+                : '0 0 0 transparent';
+            // 通过 CSS 变量下发，保证与「发光」效果叠加而不是互相覆盖
+            document.documentElement.style.setProperty('--text-shadow', textShadow);
+            labelEl.style.textShadow = textShadow;
         }
 
         function updateGlowStyle({ color, intensity, enabled } = {}) {

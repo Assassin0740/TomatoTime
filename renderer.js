@@ -91,7 +91,6 @@
         let isWorking = true;
         let timer = null;
         let currentPriority = 1;
-        let floatWin = null;
         let isTimerPaused = false;
 
         const minEl = document.getElementById('min');
@@ -104,11 +103,6 @@
             minEl.innerText = m;
             secEl.innerText = s;
 
-            if (floatWin && !floatWin.closed) {
-                floatWin.document.getElementById('floatTime').innerText = `${m}:${s}`;
-                floatWin.document.getElementById('floatLabel').innerText = isWorking ? '工作时间' : '休息时间';
-            }
-            
             if (typeof require !== 'undefined') {
                 try {
                     const { ipcRenderer } = require('electron');
@@ -2966,6 +2960,31 @@
         if (savedShadowSize) {
             shadowSizeSlider.value = savedShadowSize;
             shadowSizeValue.textContent = savedShadowSize + '%';
+        }
+
+        // ===== 自动开始下一阶段 =====
+        const autoStartNextToggle = document.getElementById('autoStartNext');
+        if (autoStartNextToggle) {
+            const savedAutoStart = localStorage.getItem('autoStartNext') === 'true';
+            autoStartNextToggle.checked = savedAutoStart;
+
+            const pushAutoStartNext = (val) => {
+                if (typeof require !== 'undefined') {
+                    try {
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.send('set-auto-start-next', val);
+                    } catch(e) {}
+                }
+            };
+
+            // 启动时同步一次，确保主进程拿到当前设置（计时逻辑在主进程）
+            pushAutoStartNext(savedAutoStart);
+
+            autoStartNextToggle.onchange = () => {
+                const val = autoStartNextToggle.checked;
+                localStorage.setItem('autoStartNext', val ? 'true' : 'false');
+                pushAutoStartNext(val);
+            };
         }
 
         // ===== 折叠工具面板：状态摘要 =====
