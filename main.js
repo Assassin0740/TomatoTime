@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, Tray, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const store = require('./store');
 
 // 单实例锁定
 const gotTheLock = app.requestSingleInstanceLock();
@@ -78,6 +79,40 @@ function saveFloatWindowConfig(bounds) {
             fs.writeFileSync(configPath, JSON.stringify(newConfig), 'utf8');
         } catch (err) {}
     }
+}
+
+/**
+ * 把主进程集中存储里的显示设置推送给悬浮窗。
+ * 原先这里是 5 段 mainWindow.webContents.executeJavaScript('localStorage.getItem(...)')：
+ * 异步、强依赖主窗口存活、时序脆弱。改为直接读 store 后变成同步、稳定，
+ * 且即使主窗口已关闭也能正确取到值。
+ */
+function pushSettingsToFloatWindow() {
+    if (!floatWindow || floatWindow.isDestroyed()) return;
+
+    const timerColor = store.getItem('timerColor');
+    if (timerColor) {
+        floatWindow.webContents.send('timer-color-update', timerColor);
+    }
+
+    floatWindow.webContents.send('shadow-style-update', {
+        color: store.getItem('shadowColor') || '#000000',
+        size: store.getItem('shadowSize') || '20'
+    });
+
+    const glowEnabled = store.getItem('glowEnabled');
+    floatWindow.webContents.send('glow-enabled-update', glowEnabled === null || glowEnabled === 'true');
+
+    floatWindow.webContents.send('glow-color-update', store.getItem('glowColor') || '#00a1d6');
+    floatWindow.webContents.send('glow-intensity-update', store.getItem('glowIntensity') || '15');
+
+    const contentSettings = {
+        showTask: store.getItem('floatShowTask') !== 'false',
+        showImages: store.getItem('floatShowImages') !== 'false',
+        imageLimit: parseInt(store.getItem('floatImageLimit') || '3', 10) || 3
+    };
+    floatWindow.webContents.send('float-content-settings', contentSettings);
+    ensureFloatWindowFitsImages(contentSettings);
 }
 
 // 需要在悬浮窗显示任务图片时，保证窗口有足够高度，否则图片会被挤压得看不见
@@ -288,62 +323,8 @@ function toggleFloatWindow() {
         if (!withBackground) {
             floatWindow.webContents.send('toggle-background');
         }
-        // 从主窗口获取保存的设置并发送到悬浮窗
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.executeJavaScript(`
-                localStorage.getItem('timerColor') || ''
-            `).then(timerColor => {
-                if (timerColor) {
-                    floatWindow.webContents.send('timer-color-update', timerColor);
-                }
-            });
-            mainWindow.webContents.executeJavaScript(`
-                JSON.stringify({
-                    color: localStorage.getItem('shadowColor') || '#000000',
-                    size: localStorage.getItem('shadowSize') || '20'
-                })
-            `).then(shadowSettings => {
-                const settings = JSON.parse(shadowSettings);
-                if (settings.color || settings.size) {
-                    floatWindow.webContents.send('shadow-style-update', settings);
-                }
-            });
-            mainWindow.webContents.executeJavaScript(`
-                localStorage.getItem('glowEnabled')
-            `).then(glowEnabled => {
-                const enabled = glowEnabled === null || glowEnabled === 'true';
-                floatWindow.webContents.send('glow-enabled-update', enabled);
-            });
-            mainWindow.webContents.executeJavaScript(`
-                JSON.stringify({
-                    color: localStorage.getItem('glowColor') || '#00a1d6',
-                    intensity: localStorage.getItem('glowIntensity') || '15'
-                })
-            `).then(glowSettings => {
-                const settings = JSON.parse(glowSettings);
-                if (settings.color) {
-                    floatWindow.webContents.send('glow-color-update', settings.color);
-                }
-                if (settings.intensity) {
-                    floatWindow.webContents.send('glow-intensity-update', settings.intensity);
-                }
-            });
-            // 同步「是否显示任务 / 是否显示任务图片 / 图片数量上限」设置
-            mainWindow.webContents.executeJavaScript(`
-                JSON.stringify({
-                    showTask: localStorage.getItem('floatShowTask') !== 'false',
-                    showImages: localStorage.getItem('floatShowImages') !== 'false',
-                    imageLimit: parseInt(localStorage.getItem('floatImageLimit') || '3', 10) || 3
-                })
-            `).then(contentSettings => {
-                if (!floatWindow || floatWindow.isDestroyed()) return;
-                try {
-                    const s = JSON.parse(contentSettings);
-                    floatWindow.webContents.send('float-content-settings', s);
-                    ensureFloatWindowFitsImages(s);
-                } catch (e) {}
-            });
-        }
+        // 推送保存的显示设置（直接读主进程集中存储，不再依赖主窗口）
+        pushSettingsToFloatWindow();
     });
     
     // 移除防止失焦出现标题栏的旧 blur hack，因为把窗口 opacity 设为 0.999 会使 Chromium 以层合成模式（Layered Window）渲染，Windows DWM 永远不会为其绘制白条标题栏。
@@ -592,7 +573,9 @@ function createWindow() {
             nodeIntegration: true,
             contextIsolation: false,
             webSecurity: false,
-            allowRunningInsecureContent: true
+            allowRunningInsecureContent: true,
+            // 存储桥接：把 localStorage 的每次写入镜像到主进程集中存储（store.js）
+            preload: path.join(__dirname, 'preload.js')
         },
         title: '计时器',
         icon: iconPath,
@@ -841,6 +824,54 @@ function createWindow() {
         autoStartNext = !!enabled;
     });
 
+    // ===== 集中存储（store.js）的桥接 =====
+    // preload.js 在页面脚本执行前 sendSync 取一次快照，据此决定「导入」还是「回填」
+    ipcMain.on('store:snapshot', (event) => {
+        event.returnValue = store.snapshot();
+    });
+
+    // 用渲染进程的完整快照刷新主进程副本（首次迁移 + 每次启动自愈）
+    ipcMain.on('store:import', (event, obj, rev) => {
+        const count = store.importAll(obj, rev);
+        event.returnValue = count;
+        console.log('[store] 已从 localStorage 导入 ' + count + ' 项');
+    });
+
+    // 回填前把 localStorage 现状留档，万一判断失误还能找回
+    ipcMain.on('store:rescue-ls', (event, obj) => {
+        try {
+            const keys = obj ? Object.keys(obj).filter(k => k !== '__store_rev' && k !== '__store_shim') : [];
+            if (keys.length === 0) {
+                event.returnValue = false;
+                return;
+            }
+            const file = path.join(app.getPath('userData'), 'localStorage-rescue-' + Date.now() + '.json');
+            fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+            console.log('[store] 回填前已留档 localStorage：', file);
+            event.returnValue = true;
+        } catch (e) {
+            console.error('[store] 留档失败：', e);
+            event.returnValue = false;
+        }
+    });
+
+    // 渲染进程每次写入 localStorage，preload 都会镜像一份过来
+    ipcMain.on('store:set', (event, key, value, rev) => {
+        store.setItem(key, value, rev);
+    });
+
+    ipcMain.on('store:remove', (event, key, rev) => {
+        store.removeItem(key, rev);
+    });
+
+    ipcMain.on('store:clear', () => {
+        store.clear();
+    });
+
+    // 供主进程内部 / 将来其它通道查询
+    ipcMain.handle('store:get-all', () => store.getAll());
+    ipcMain.handle('store:stats', () => store.stats());
+
     ipcMain.on('toggle-mode', () => {
         if (timerInterval) {
             clearInterval(timerInterval);
@@ -886,6 +917,14 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    // 集中存储必须先于窗口创建就绪：preload.js 会立刻 sendSync 来取快照
+    try {
+        const info = store.init();
+        console.log('[store] 数据文件:', info.file, '| 已有副本:', info.hasStore, '| 键数:', info.keys);
+    } catch (e) {
+        console.error('[store] 初始化失败，将退回纯 localStorage 模式：', e);
+    }
+
     createWindow();
     // 只在应用启动时创建一次托盘
     createTray();
@@ -912,6 +951,13 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
     appIsQuitting = true;
     trayCreated = false; // 重置托盘标志
+
+    // 把最后一批写入落盘（平时是 180ms 合并写入，退出前必须强制刷一次）
+    try {
+        store.flushSync();
+    } catch (e) {
+        console.error('[store] 退出前落盘失败：', e);
+    }
     
     // 清理托盘
     if (tray) {
