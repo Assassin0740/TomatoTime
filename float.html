@@ -33,15 +33,143 @@
         #container {
             position: relative;
             z-index: 1;
-            text-align: center;
-            padding: 0;
+            padding: 0 16px;
             width: 100%;
             height: 100%;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            gap: 16px;
+        }
+        #timer-section {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            flex-shrink: 0;
+        }
+        #divider {
+            width: 1px;
+            height: 60%;
+            background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.15) 20%, rgba(255, 255, 255, 0.15) 80%, transparent);
+            flex-shrink: 0;
+        }
+        #task-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: center;
+            flex-grow: 1;
+            min-width: 0;
+            height: 100%;
+            padding: 8px 0;
+            gap: 6px;
+        }
+        #task-header {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            letter-spacing: 1px;
+            user-select: none;
+        }
+        #task-content-wrapper {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            gap: 8px;
+            min-height: 24px;
+            position: relative;
+        }
+        #task-checkbox {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border: 1.5px solid rgba(255, 255, 255, 0.4);
+            border-radius: 4px;
+            outline: none;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+            background: transparent;
+        }
+        #task-checkbox:hover {
+            border-color: var(--glow-color, #00a1d6);
+            box-shadow: 0 0 8px var(--glow-color, rgba(0, 161, 214, 0.6));
+        }
+        #task-checkbox:checked {
+            background: var(--glow-color, #00a1d6);
+            border-color: var(--glow-color, #00a1d6);
+            box-shadow: 0 0 8px var(--glow-color, rgba(0, 161, 214, 0.6));
+        }
+        #task-checkbox:checked::after {
+            content: '✓';
+            position: absolute;
+            color: #fff;
+            font-size: 11px;
+            font-weight: bold;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #task-text {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            white-space: nowrap;
             overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            flex-grow: 1;
+            transition: all 0.2s;
+            user-select: text;
+        }
+        #task-text:hover {
+            color: var(--glow-color, #00a1d6);
+            text-shadow: 0 0 5px var(--glow-color, rgba(0, 161, 214, 0.3));
+        }
+        #task-text.completed {
+            text-decoration: line-through;
+            color: rgba(255, 255, 255, 0.35);
+            transition: all 0.5s ease-out;
+        }
+        #task-input {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1.5px solid var(--glow-color, #00a1d6);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 3px 8px;
+            outline: none;
+            width: 100%;
+            height: 24px;
+            font-family: inherit;
+        }
+        #task-footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.3);
+            user-select: none;
+            margin-top: 2px;
+        }
+        .task-nav-btn {
+            cursor: pointer;
+            padding: 0 6px;
+            transition: color 0.2s, transform 0.1s;
+            display: inline-block;
+        }
+        .task-nav-btn:hover {
+            color: var(--glow-color, #00a1d6);
+        }
+        .task-nav-btn:active {
+            transform: scale(0.85);
+        }
+        #task-nav-info {
+            font-family: monospace;
+            letter-spacing: 0.5px;
         }
         #label {
             font-size: 12px;
@@ -88,12 +216,96 @@
             max-height: 30%;
             display: none;
         }
+        /* ===== 当前任务里的图片 ===== */
+        #task-images {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            max-width: 100%;
+            min-width: 0;
+        }
+        #task-images img {
+            height: clamp(30px, 42vh, 64px);
+            max-width: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+            cursor: zoom-in;
+            transition: transform 0.15s, box-shadow 0.15s;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        #task-images img:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 14px var(--glow-color, rgba(0, 161, 214, 0.75));
+        }
+        /* 点击后在悬浮窗内临时放大，再点一次还原 */
+        #task-images img.zoomed {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: auto;
+            height: auto;
+            max-width: 96vw;
+            max-height: 96vh;
+            z-index: 9999;
+            cursor: zoom-out;
+            border-radius: 8px;
+            box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.8);
+        }
+        #task-images img.zoomed:hover {
+            transform: translate(-50%, -50%);
+        }
+        #task-images .task-img-more {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            align-self: center;
+        }
+        @media (max-width: 299px) {
+            #divider, #task-section {
+                display: none !important;
+            }
+            #container {
+                padding: 0;
+                justify-content: center;
+                gap: 0;
+            }
+        }
     </style>
 </head>
 <body class="with-background">
     <div id="container">
-        <div id="label">工作时间</div>
-        <div id="time" class="glow">25:00</div>
+        <!-- 左侧计时器栏 -->
+        <div id="timer-section">
+            <div id="label">工作时间</div>
+            <div id="time" class="glow">25:00</div>
+        </div>
+        
+        <!-- 中间分隔线 -->
+        <div id="divider"></div>
+        
+        <!-- 右侧任务区 -->
+        <div id="task-section">
+            <div id="task-header">当前任务</div>
+            <div id="task-content-wrapper">
+                <input type="checkbox" id="task-checkbox" class="interactive">
+                <span id="task-text" class="interactive" title="点击编辑此任务，打勾完成">暂无任务，点击输入...</span>
+                <input type="text" id="task-input" class="interactive" placeholder="输入并回车以添加任务...">
+            </div>
+            <div id="task-images" class="interactive"></div>
+            <div id="task-footer">
+                <span id="task-nav-prev" class="task-nav-btn interactive" title="上一个任务">◀</span>
+                <span id="task-nav-info">0 / 0</span>
+                <span id="task-nav-next" class="task-nav-btn interactive" title="下一个任务">▶</span>
+            </div>
+        </div>
+        
         <img id="float-image" />
     </div>
 
@@ -110,6 +322,9 @@
         let glowColor = '#00a1d6';
         let glowIntensity = 15;
         let glowEnabled = true;
+        let showTask = true;    // 是否显示任务区
+        let showImages = true;  // 是否显示任务里的图片
+        let imageLimit = 3;     // 最多显示几张图
 
         function updateShadowStyle({ color, size } = {}) {
             if (color !== undefined) shadowColor = color;
@@ -239,6 +454,15 @@
             }
         });
 
+        // 接收主窗口下发的「显示任务 / 显示图片 / 图片数量上限」设置
+        ipcRenderer.on('float-content-settings', (event, s) => {
+            if (!s) return;
+            if (s.showTask !== undefined) showTask = !!s.showTask;
+            if (s.showImages !== undefined) showImages = !!s.showImages;
+            if (typeof s.imageLimit === 'number' && s.imageLimit > 0) imageLimit = s.imageLimit;
+            applyContentSettings();
+        });
+
         function startEdit() {
             const currentTime = timeEl.textContent;
             const [min, sec] = currentTime.split(':');
@@ -331,8 +555,13 @@
         }
         
         // 只有没锁定的时候才处理拖动和菜单
+        let isMouseDown = false;
+
         document.addEventListener('mousedown', function(e) {
-            if (!isLocked) {
+            const tag = e.target.tagName.toLowerCase();
+            const isInteractive = tag === 'input' || tag === 'button' || tag === 'a' || e.target.closest('.interactive') || e.target.closest('#edit-input');
+            if (!isLocked && e.button === 0 && !isInteractive) {
+                isMouseDown = true;
                 ipcRenderer.send('float-mousedown', {
                     button: e.button,
                     screenX: e.screenX,
@@ -342,7 +571,7 @@
         });
         
         document.addEventListener('mousemove', function(e) {
-            if (!isLocked) {
+            if (!isLocked && isMouseDown) {
                 ipcRenderer.send('float-mousemove', {
                     screenX: e.screenX,
                     screenY: e.screenY
@@ -352,12 +581,14 @@
         
         document.addEventListener('mouseup', function() {
             if (!isLocked) {
+                isMouseDown = false;
                 ipcRenderer.send('float-mouseup');
             }
         });
         
         document.addEventListener('mouseleave', function() {
             if (!isLocked) {
+                isMouseDown = false;
                 ipcRenderer.send('float-mouseup');
             }
         });
@@ -370,6 +601,257 @@
             }
         });
         
+        // 悬浮窗任务管理事件监听及交互处理
+        let currentNotes = [];
+        let currentNoteIndex = 0;
+
+        function stripHtml(html) {
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = html;
+            return tmp.textContent || tmp.innerText || '';
+        }
+
+        function escapeHtmlText(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        // 悬浮窗只编辑纯文本，但任务原文里可能含图片 / 表情。
+        // 这里把原有 img 标签完整保留下来，避免「在悬浮窗改文字」把任务里的图片删掉。
+        function buildEditedContent(originalHtml, newText) {
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = originalHtml || '';
+            const keepImgs = Array.from(tmp.querySelectorAll('img')).map(img => img.outerHTML);
+            const safeText = escapeHtmlText(newText).replace(/\n/g, '<br>');
+            if (keepImgs.length === 0) return safeText;
+            return (safeText ? safeText + '<br>' : '') + keepImgs.join('');
+        }
+
+        // 应用「是否显示任务 / 是否显示图片」设置
+        function applyContentSettings() {
+            const taskSection = document.getElementById('task-section');
+            const divider = document.getElementById('divider');
+            if (taskSection) taskSection.style.display = showTask ? 'flex' : 'none';
+            if (divider) divider.style.display = showTask ? 'block' : 'none';
+            renderCurrentTask();
+        }
+
+        // 把任务内容里的图片取出来渲染（最多 imageLimit 张，超出显示 +N）
+        function renderTaskImages(html) {
+            const box = document.getElementById('task-images');
+            if (!box) return;
+            box.innerHTML = '';
+            if (!showImages) {
+                box.style.display = 'none';
+                return;
+            }
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = html || '';
+            const srcs = Array.from(tmp.querySelectorAll('img'))
+                .map(img => img.getAttribute('src'))
+                .filter(Boolean);
+
+            if (srcs.length === 0) {
+                box.style.display = 'none';
+                return;
+            }
+
+            box.style.display = 'flex';
+            srcs.slice(0, imageLimit).forEach(src => {
+                const img = document.createElement('img');
+                img.src = src;
+                img.className = 'interactive';
+                img.title = '点击放大 / 再次点击还原';
+                img.onclick = (e) => {
+                    e.stopPropagation();
+                    const isZoomed = img.classList.contains('zoomed');
+                    box.querySelectorAll('img.zoomed').forEach(i => i.classList.remove('zoomed'));
+                    if (!isZoomed) img.classList.add('zoomed');
+                };
+                img.onerror = () => { img.remove(); };
+                box.appendChild(img);
+            });
+
+            if (srcs.length > imageLimit) {
+                const more = document.createElement('span');
+                more.className = 'task-img-more';
+                more.textContent = '+' + (srcs.length - imageLimit);
+                more.title = `该任务还有 ${srcs.length - imageLimit} 张图片`;
+                box.appendChild(more);
+            }
+        }
+
+        function renderCurrentTask() {
+            const taskText = document.getElementById('task-text');
+            const taskCheckbox = document.getElementById('task-checkbox');
+            const taskInput = document.getElementById('task-input');
+            const navInfo = document.getElementById('task-nav-info');
+            const navPrev = document.getElementById('task-nav-prev');
+            const navNext = document.getElementById('task-nav-next');
+            
+            if (currentNotes.length === 0) {
+                taskCheckbox.style.display = 'none';
+                taskCheckbox.checked = false;
+                taskText.textContent = '暂无任务，点击输入...';
+                taskText.classList.remove('completed');
+                taskText.style.display = 'block';
+                taskInput.style.display = 'none';
+                navInfo.textContent = '0/0';
+                navPrev.style.visibility = 'hidden';
+                navNext.style.visibility = 'hidden';
+                currentNoteIndex = 0;
+                renderTaskImages('');
+                return;
+            }
+
+            if (currentNoteIndex < 0) currentNoteIndex = 0;
+            if (currentNoteIndex >= currentNotes.length) currentNoteIndex = currentNotes.length - 1;
+
+            const activeNote = currentNotes[currentNoteIndex];
+            const plainText = stripHtml(activeNote.content);
+
+            taskCheckbox.style.display = 'block';
+            taskCheckbox.checked = activeNote.done || false;
+            
+            if (activeNote.done) {
+                taskText.classList.add('completed');
+            } else {
+                taskText.classList.remove('completed');
+            }
+            
+            taskText.textContent = plainText || '无任务内容';
+            taskText.style.display = 'block';
+            taskInput.style.display = 'none';
+            renderTaskImages(activeNote.content);
+            
+            navInfo.textContent = `${currentNoteIndex + 1}/${currentNotes.length}`;
+            
+            if (currentNotes.length > 1) {
+                navPrev.style.visibility = 'visible';
+                navNext.style.visibility = 'visible';
+            } else {
+                navPrev.style.visibility = 'hidden';
+                navNext.style.visibility = 'hidden';
+            }
+        }
+
+        ipcRenderer.on('sync-notes-to-float', (event, notes) => {
+            const prevActiveNoteId = currentNotes[currentNoteIndex]?.id;
+            currentNotes = (notes || []).filter(n => !n.done);
+            
+            if (prevActiveNoteId) {
+                const newIdx = currentNotes.findIndex(n => n.id === prevActiveNoteId);
+                if (newIdx !== -1) {
+                    currentNoteIndex = newIdx;
+                } else {
+                    currentNoteIndex = 0;
+                }
+            } else {
+                currentNoteIndex = 0;
+            }
+            
+            renderCurrentTask();
+        });
+
+        ipcRenderer.send('request-notes-from-float');
+
+        const taskCheckbox = document.getElementById('task-checkbox');
+        taskCheckbox.addEventListener('change', () => {
+            if (currentNotes.length === 0) return;
+            const activeNote = currentNotes[currentNoteIndex];
+            const taskText = document.getElementById('task-text');
+            
+            if (taskCheckbox.checked) {
+                taskText.classList.add('completed');
+                taskText.style.opacity = '0.5';
+                setTimeout(() => {
+                    ipcRenderer.send('float-toggle-done', activeNote.id);
+                    taskText.style.opacity = '1';
+                }, 600);
+            } else {
+                taskText.classList.remove('completed');
+                ipcRenderer.send('float-toggle-done', activeNote.id);
+            }
+        });
+
+        document.getElementById('task-nav-prev').addEventListener('click', () => {
+            if (currentNotes.length <= 1) return;
+            currentNoteIndex = (currentNoteIndex - 1 + currentNotes.length) % currentNotes.length;
+            renderCurrentTask();
+        });
+
+        document.getElementById('task-nav-next').addEventListener('click', () => {
+            if (currentNotes.length <= 1) return;
+            currentNoteIndex = (currentNoteIndex + 1) % currentNotes.length;
+            renderCurrentTask();
+        });
+
+        const taskText = document.getElementById('task-text');
+        const taskInput = document.getElementById('task-input');
+
+        taskText.addEventListener('click', () => {
+            if (isLocked) return;
+            taskText.style.display = 'none';
+            taskInput.style.display = 'block';
+            
+            if (currentNotes.length > 0) {
+                const activeNote = currentNotes[currentNoteIndex];
+                taskInput.value = stripHtml(activeNote.content);
+            } else {
+                taskInput.value = '';
+            }
+            taskInput.focus();
+            taskInput.select();
+        });
+
+        function submitTaskEdit() {
+            const newContent = taskInput.value.trim();
+            if (currentNotes.length > 0) {
+                const activeNote = currentNotes[currentNoteIndex];
+                const originalHtml = activeNote.content || '';
+                if (newContent && newContent !== stripHtml(originalHtml)) {
+                    // 关键：保留任务原有的图片，避免在悬浮窗编辑文字时把图片一并覆盖丢失
+                    ipcRenderer.send('float-edit-note', {
+                        id: activeNote.id,
+                        content: buildEditedContent(originalHtml, newContent)
+                    });
+                }
+            } else {
+                if (newContent) {
+                    ipcRenderer.send('float-add-note', newContent);
+                }
+            }
+            taskInput.style.display = 'none';
+            taskText.style.display = 'block';
+        }
+
+        taskInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                submitTaskEdit();
+            } else if (e.key === 'Escape') {
+                taskInput.style.display = 'none';
+                taskText.style.display = 'block';
+            }
+        });
+
+        taskInput.addEventListener('blur', () => {
+            submitTaskEdit();
+        });
+
+        // 兜底：先从本地存储恢复显示设置（主窗口随后会推送最新值覆盖）
+        (function restoreLocalContentSettings() {
+            try {
+                const st = localStorage.getItem('floatShowTask');
+                if (st !== null) showTask = st === 'true';
+                const si = localStorage.getItem('floatShowImages');
+                if (si !== null) showImages = si === 'true';
+                const sl = parseInt(localStorage.getItem('floatImageLimit'), 10);
+                if (!isNaN(sl) && sl > 0) imageLimit = sl;
+            } catch (e) {}
+            applyContentSettings();
+        })();
+
         ipcRenderer.send('get-timer-status');
     </script>
 </body>

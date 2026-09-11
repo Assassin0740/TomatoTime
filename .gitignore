@@ -2,3 +2,6 @@ node_modules/
 dist/
 .DS_Store
 *.log
+
+# 本地工作记忆（非项目交付物）
+.workbuddy/

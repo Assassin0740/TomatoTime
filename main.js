@@ -33,6 +33,7 @@ let trayCreated = false;
 // 获取配置文件路径
 const configPath = path.join(app.getPath('userData'), 'floatWindowConfig.json');
 const customDrawsPath = path.join(app.getPath('userData'), 'CustomDraws');
+const noteImagesPath = path.join(app.getPath('userData'), 'NoteImages');
 
 // 读取悬浮窗配置
 function loadFloatWindowConfig() {
@@ -41,10 +42,10 @@ function loadFloatWindowConfig() {
             const data = fs.readFileSync(configPath, 'utf8');
             const config = JSON.parse(data);
             // 验证和限制窗口尺寸，防止异常值
-            if (config.width && (config.width < 150 || config.width > 500)) {
-                config.width = 280;
+            if (config.width && (config.width < 150 || config.width > 700)) {
+                config.width = 380;
             }
-            if (config.height && (config.height < 50 || config.height > 200)) {
+            if (config.height && (config.height < 50 || config.height > 250)) {
                 config.height = 100;
             }
             return config;
@@ -53,7 +54,7 @@ function loadFloatWindowConfig() {
         console.log('Could not load float window config');
     }
     return {
-        width: 280,
+        width: 380,
         height: 100,
         x: null,
         y: null,
@@ -61,14 +62,36 @@ function loadFloatWindowConfig() {
     };
 }
 
-// 保存悬浮窗配置
+// 保存悬浮窗配置（采用原子写入防止断电、崩溃时数据损坏）
 function saveFloatWindowConfig(bounds) {
     try {
         const config = loadFloatWindowConfig();
         const newConfig = { ...config, ...bounds };
-        fs.writeFileSync(configPath, JSON.stringify(newConfig));
+        const tempPath = configPath + '.tmp';
+        fs.writeFileSync(tempPath, JSON.stringify(newConfig), 'utf8');
+        fs.renameSync(tempPath, configPath);
     } catch (e) {
-        console.log('Could not save float window config');
+        console.error('原子保存悬浮窗配置失败，执行安全降级直接写入:', e);
+        try {
+            const config = loadFloatWindowConfig();
+            const newConfig = { ...config, ...bounds };
+            fs.writeFileSync(configPath, JSON.stringify(newConfig), 'utf8');
+        } catch (err) {}
+    }
+}
+
+// 需要在悬浮窗显示任务图片时，保证窗口有足够高度，否则图片会被挤压得看不见
+function ensureFloatWindowFitsImages(settings) {
+    if (!floatWindow || floatWindow.isDestroyed()) return;
+    if (!settings || !settings.showTask || !settings.showImages) return;
+    try {
+        const bounds = floatWindow.getBounds();
+        if (bounds.height < 160) {
+            floatWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: 170 });
+            saveFloatWindowConfig({ height: 170 });
+        }
+    } catch (e) {
+        console.error('调整悬浮窗高度失败:', e);
     }
 }
 
@@ -127,7 +150,7 @@ function toggleTimer() {
         const elapsed = Math.floor((now - lastTime) / 1000);
         if (elapsed >= 1) {
             currentTime -= elapsed;
-            lastTime = now;
+            lastTime += elapsed * 1000; // 精准时间累积补偿，防止 setInterval 受负载/睡眠休眠导致的累计漂移误差
             
             if (currentTime <= 0) {
                 clearInterval(timerInterval);
@@ -173,7 +196,7 @@ function toggleFloatWindow() {
     
     // 读取保存的配置
     const savedConfig = loadFloatWindowConfig();
-    const windowWidth = savedConfig.width || 280;
+    const windowWidth = savedConfig.width || 380;
     const windowHeight = savedConfig.height || 100;
     let windowX = savedConfig.x;
     let windowY = savedConfig.y;
@@ -206,16 +229,15 @@ function toggleFloatWindow() {
         }
     }
     
-    floatWindow = new BrowserWindow({
+    const floatWindowOptions = {
         width: windowWidth,
         height: windowHeight,
         x: windowX,
         y: windowY,
         frame: false,
-        titleBarStyle: 'hidden',
-        titleBarOverlay: false,
         transparent: true,
         backgroundColor: '#00000000',
+        opacity: 0.999,
         hasShadow: false,
         alwaysOnTop: isFloatPinned,
         skipTaskbar: true,
@@ -227,8 +249,8 @@ function toggleFloatWindow() {
         show: false,
         minWidth: 150,
         minHeight: 50,
-        maxWidth: 500,
-        maxHeight: 200,
+        maxWidth: 700,
+        maxHeight: 250,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
@@ -238,7 +260,13 @@ function toggleFloatWindow() {
         },
         icon: path.join(__dirname, '图标', 'dstuy-bkp5e-001.ico'),
         title: ''
-    });
+    };
+
+    if (process.platform === 'darwin') {
+        floatWindowOptions.titleBarStyle = 'hidden';
+    }
+
+    floatWindow = new BrowserWindow(floatWindowOptions);
     
     floatWindow.setAlwaysOnTop(isFloatPinned);
     floatWindow.setIgnoreMouseEvents(isWindowLocked);
@@ -295,20 +323,25 @@ function toggleFloatWindow() {
                     floatWindow.webContents.send('glow-intensity-update', settings.intensity);
                 }
             });
+            // 同步「是否显示任务 / 是否显示任务图片 / 图片数量上限」设置
+            mainWindow.webContents.executeJavaScript(`
+                JSON.stringify({
+                    showTask: localStorage.getItem('floatShowTask') !== 'false',
+                    showImages: localStorage.getItem('floatShowImages') !== 'false',
+                    imageLimit: parseInt(localStorage.getItem('floatImageLimit') || '3', 10) || 3
+                })
+            `).then(contentSettings => {
+                if (!floatWindow || floatWindow.isDestroyed()) return;
+                try {
+                    const s = JSON.parse(contentSettings);
+                    floatWindow.webContents.send('float-content-settings', s);
+                    ensureFloatWindowFitsImages(s);
+                } catch (e) {}
+            });
         }
     });
     
-    // 防止失焦时出现标题栏
-    floatWindow.on('blur', () => {
-        if (floatWindow && !floatWindow.isDestroyed()) {
-            floatWindow.setOpacity(0.99);
-            setTimeout(() => {
-                if (floatWindow && !floatWindow.isDestroyed()) {
-                    floatWindow.setOpacity(1.0);
-                }
-            }, 20);
-        }
-    });
+    // 移除防止失焦出现标题栏的旧 blur hack，因为把窗口 opacity 设为 0.999 会使 Chromium 以层合成模式（Layered Window）渲染，Windows DWM 永远不会为其绘制白条标题栏。
     
     // 保存窗口位置和大小变化（防抖优化）
     let saveTimeout = null;
@@ -322,8 +355,8 @@ function toggleFloatWindow() {
                     try {
                         const bounds = floatWindow.getBounds();
                         // 防止异常值导致抖动
-                        if (bounds.width >= 150 && bounds.width <= 500 &&
-                            bounds.height >= 50 && bounds.height <= 200) {
+                        if (bounds.width >= 150 && bounds.width <= 700 &&
+                            bounds.height >= 50 && bounds.height <= 250) {
                             saveFloatWindowConfig(bounds);
                         }
                     } finally {
@@ -456,18 +489,28 @@ function toggleFloatWindow() {
         });
     }
 
+    // 右键菜单可能同时来自 webContents 的 context-menu 事件与渲染进程的 IPC 请求，
+    // 这里用时间戳去重，避免同一个右键动作叠出两层菜单
+    let lastFloatMenuAt = 0;
+    const popupFloatMenu = () => {
+        if (!floatWindow || floatWindow.isDestroyed()) return;
+        const now = Date.now();
+        if (now - lastFloatMenuAt < 250) return;
+        lastFloatMenuAt = now;
+        const menu = createContextMenu();
+        menu.popup({ window: floatWindow });
+    };
+
     floatWindow.webContents.on('context-menu', (event, params) => {
         if (!isWindowLocked) {
             event.preventDefault();
-            const menu = createContextMenu();
-            menu.popup({ window: floatWindow });
+            popupFloatMenu();
         }
     });
 
     ipcMain.on('show-float-menu', () => {
         if (!isWindowLocked && floatWindow && !floatWindow.isDestroyed()) {
-            const menu = createContextMenu();
-            menu.popup({ window: floatWindow });
+            popupFloatMenu();
         }
     });
 
@@ -476,22 +519,13 @@ function toggleFloatWindow() {
         if (!isWindowLocked && data.button === 0) {
             isDragging = true;
             const pos = floatWindow.getPosition();
-            const size = floatWindow.getSize();
             dragOffset.x = data.screenX - pos[0];
             dragOffset.y = data.screenY - pos[1];
-            // 保存拖动前的窗口大小，防止拖动时改变
-            dragOffset.originalWidth = size[0];
-            dragOffset.originalHeight = size[1];
         }
     });
 
     ipcMain.on('float-mousemove', (event, data) => {
         if (isDragging && floatWindow && !floatWindow.isDestroyed()) {
-            // 确保窗口大小在拖动过程中不会变化
-            const currentSize = floatWindow.getSize();
-            if (currentSize[0] !== dragOffset.originalWidth || currentSize[1] !== dragOffset.originalHeight) {
-                floatWindow.setSize(dragOffset.originalWidth, dragOffset.originalHeight);
-            }
             floatWindow.setPosition(
                 Math.floor(data.screenX - dragOffset.x),
                 Math.floor(data.screenY - dragOffset.y)
@@ -501,6 +535,25 @@ function toggleFloatWindow() {
 
     ipcMain.on('float-mouseup', () => {
         isDragging = false;
+    });
+
+    floatWindow.on('close', () => {
+        // 如果有防抖未保存的窗口位置和大小，立即保存
+        if (saveTimeout) {
+            clearTimeout(saveTimeout);
+            saveTimeout = null;
+            if (floatWindow && !floatWindow.isDestroyed()) {
+                try {
+                    const bounds = floatWindow.getBounds();
+                    if (bounds.width >= 150 && bounds.width <= 700 &&
+                        bounds.height >= 50 && bounds.height <= 250) {
+                        saveFloatWindowConfig(bounds);
+                    }
+                } catch (e) {
+                    console.error('Error saving window state on close:', e);
+                }
+            }
+        }
     });
 
     floatWindow.on('closed', () => {
@@ -698,6 +751,37 @@ function createWindow() {
         }
     });
 
+    // 悬浮窗任务管理同步 IPC 转发逻辑
+    ipcMain.on('request-notes-from-float', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('request-notes-from-float');
+        }
+    });
+
+    ipcMain.on('sync-notes-to-float', (event, notes) => {
+        if (floatWindow && !floatWindow.isDestroyed()) {
+            floatWindow.webContents.send('sync-notes-to-float', notes);
+        }
+    });
+
+    ipcMain.on('float-toggle-done', (event, id) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('float-toggle-done', id);
+        }
+    });
+
+    ipcMain.on('float-edit-note', (event, data) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('float-edit-note', data);
+        }
+    });
+
+    ipcMain.on('float-add-note', (event, content) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('float-add-note', content);
+        }
+    });
+
     ipcMain.on('update-float-time', (event, data) => {
         if (floatWindow && !floatWindow.isDestroyed()) {
             floatWindow.webContents.send('time-update', data);
@@ -740,6 +824,14 @@ function createWindow() {
         }
     });
 
+    // 悬浮窗内容显示设置（是否显示任务 / 是否显示图片 / 图片数量上限）
+    ipcMain.on('update-float-content-settings', (event, settings) => {
+        if (floatWindow && !floatWindow.isDestroyed()) {
+            floatWindow.webContents.send('float-content-settings', settings);
+            ensureFloatWindowFitsImages(settings);
+        }
+    });
+
     ipcMain.on('toggle-mode', () => {
         if (timerInterval) {
             clearInterval(timerInterval);
@@ -748,6 +840,7 @@ function createWindow() {
         isWorking = !isWorking;
         currentTime = isWorking ? WORK_TIME : REST_TIME;
         broadcastTimerStatus();
+        updateTrayMenu();
     });
 
     ipcMain.on('toggle-timer', () => {
@@ -1114,6 +1207,86 @@ ipcMain.on('delete-background-image', (event, fileName) => {
     } catch (e) {
         console.error('删除背景图片失败:', e);
         event.reply('delete-background-image-result', { success: false, error: e.message });
+    }
+});
+
+// 保存卡片/笔记中的图片到本地，避免使用 Base64，并通过 SHA-256 哈希去重（类似 Telegram）
+ipcMain.handle('save-note-image', async (event, base64Data) => {
+    try {
+        const url = require('url');
+        const crypto = require('crypto');
+        if (!fs.existsSync(noteImagesPath)) {
+            fs.mkdirSync(noteImagesPath, { recursive: true });
+        }
+        
+        let ext = 'png';
+        let data = base64Data;
+        
+        const matches = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (matches) {
+            ext = matches[1];
+            data = matches[2];
+        } else {
+            const base64Clean = base64Data.replace(/^data:image\/\w+;base64,/, '');
+            data = base64Clean;
+        }
+        const buffer = Buffer.from(data, 'base64');
+        
+        // 1. 计算图片 buffer 的 SHA-256 哈希值作为文件唯一指纹
+        const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+        
+        // 2. 用哈希指纹和扩展名组合成固定文件名
+        const fileName = `img_${hash}.${ext}`;
+        const filePath = path.join(noteImagesPath, fileName);
+        
+        // 3. 检查文件是否已存在。如果存在则跳过写入直接复用，实现完美去重
+        if (fs.existsSync(filePath)) {
+            console.log('检测到相同图片，跳过存盘直接复用索引:', filePath);
+        } else {
+            fs.writeFileSync(filePath, buffer);
+            console.log('新图片已保存到本地:', filePath);
+        }
+        
+        // 自动转换为标准的 file URL（处理了盘符、中文字符与空格的 URL 编码）
+        return url.pathToFileURL(filePath).href;
+    } catch (e) {
+        console.error('保存笔记图片失败:', e);
+        throw e;
+    }
+});
+
+// 深度图片垃圾回收 (GC)：清理无人引用的孤立本地图片文件，防止磁盘泄露
+ipcMain.handle('cleanup-unused-images', async (event, usedFileNames) => {
+    try {
+        if (!fs.existsSync(noteImagesPath)) {
+            return { success: true, deletedCount: 0 };
+        }
+        
+        const files = fs.readdirSync(noteImagesPath);
+        let deletedCount = 0;
+        
+        // 转换引用列表为 Set 加快查找
+        const usedSet = new Set(usedFileNames);
+        
+        files.forEach(file => {
+            // 只清理 img_ 开头的文件，保证安全性，避免误删其他文件
+            if (file.startsWith('img_') && !usedSet.has(file)) {
+                try {
+                    const filePath = path.join(noteImagesPath, file);
+                    fs.unlinkSync(filePath);
+                    console.log('图片垃圾回收成功删除孤立文件:', file);
+                    deletedCount++;
+                } catch (err) {
+                    console.error('垃圾回收删除图片失败:', file, err);
+                }
+            }
+        });
+        
+        console.log(`智能图片垃圾回收(GC)执行完毕，共清除 ${deletedCount} 个孤立文件。`);
+        return { success: true, deletedCount: deletedCount };
+    } catch (e) {
+        console.error('智能图片垃圾回收(GC)执行失败:', e);
+        return { success: false, error: e.message };
     }
 });
 
