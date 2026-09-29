@@ -93,6 +93,19 @@
         let currentPriority = 1;
         let isTimerPaused = false;
 
+        // 全局搜索关键词（M14-5）。放在这里声明是为了避免在 render() 之前进入 TDZ
+        let searchKeyword = '';
+
+        /** 纯文本匹配：任务正文 + 评论一起搜，忽略 HTML 标签 */
+        function matchKeyword(note, keyword) {
+            if (!keyword) return true;
+            let text = String(note.content || '').replace(/<[^>]*>/g, ' ');
+            if (note.comments && note.comments.length) {
+                text += ' ' + note.comments.map(c => (c && c.text) || '').join(' ');
+            }
+            return text.toLowerCase().indexOf(keyword) !== -1;
+        }
+
         const minEl = document.getElementById('min');
         const secEl = document.getElementById('sec');
         const modeText = document.getElementById('modeText');
@@ -828,6 +841,11 @@
             if (currentTypeView === 'short') filtered = filtered.filter(x => x.type === 'short');
             if (currentTypeView === 'long') filtered = filtered.filter(x => x.type === 'long');
 
+            // 关键词搜索（M14-5）：标题 / 内容 / 评论一起匹配
+            if (searchKeyword) {
+                filtered = filtered.filter(x => matchKeyword(x, searchKeyword));
+            }
+
             filtered.sort((a, b) => {
                 // 1. 先按完成状态排序：已完成的放下面
                 const aDone = a.done ? 1 : 0;
@@ -890,8 +908,13 @@
                     ? `${formatDate(n.ts)} <span class="done-time-badge" style="background: rgba(76, 175, 80, 0.15); color: #81c784; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; font-weight: 500; border: 1px solid rgba(76, 175, 80, 0.3);">✓ 已完成: ${formatDate(n.doneTime)}</span>`
                     : formatDate(n.ts);
 
+                // 提醒徽标（M14-3），点击可直接改时间
+                const remindBadge = n.remindAt
+                    ? `<span class="done-time-badge" style="background: rgba(255, 152, 0, 0.15); color: #ffb74d; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; font-weight: 500; border: 1px solid rgba(255, 152, 0, 0.3); cursor: pointer;" onclick="setReminder(${n.id})" title="点击修改 / 清除提醒">⏰ 提醒: ${formatDate(n.remindAt)}</span>`
+                    : '';
+
                 card.innerHTML = `
-                    <div class="note-date">${noteDateContent}</div>
+                    <div class="note-date">${noteDateContent}${remindBadge}</div>
                     <div class="note-content-editable" contenteditable="true" data-note-id="${n.id}" onblur="handleNoteBlur(this)" onkeydown="handleNoteKeydown(event)">${contentHtml}</div>
                     <div class="note-footer">
                         <div>
@@ -900,6 +923,7 @@
                             <span class="status-tag ${n.done ? 'status-done' : 'status-undone'}" style="cursor:pointer" onclick="toggleDone(${n.id})" title="点击切换完成状态">${n.done ? '已完成' : '未完成'}</span>
                         </div>
                         <div class="note-actions">
+                            <span class="icon" title="设置提醒" onclick="setReminder(${n.id})" style="font-size: 14px;">⏰</span>
                             <span class="icon" title="完成" onclick="toggleDone(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
                             <span class="icon" title="评论" onclick="toggleComment(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2z"/></svg></span>
                             <span class="icon" title="删除" onclick="deleteNote(${n.id})"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></span>
@@ -1058,6 +1082,11 @@
                     const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
                     return dStr === dateStr;
                 });
+            }
+
+            // 搜索：归档区同样按关键词过滤
+            if (searchKeyword) {
+                groupNotes = groupNotes.filter(n => matchKeyword(n, searchKeyword));
             }
             
             groupNotes.sort((a, b) => (b.doneTime || b.ts || 0) - (a.doneTime || a.ts || 0));
@@ -1500,40 +1529,22 @@
                 }
             }
 
+            /**
+             * 复制大图到系统剪贴板。
+             * 之前这里用 nativeImage.createFromDataURL(modalImg.src)，而图片存的是
+             * file:// 本地路径 —— createFromDataURL 只认 data URL，于是复制必然失败。
+             * 现在统一走主进程：先把 file:// / http:// / data: 解析成真实字节，再写剪贴板，
+             * 因此复制出来的图可以直接粘进微信。
+             */
             function copyImageToClipboard() {
-                const dataUrl = modalImg.src;
-                if (!dataUrl) return;
-
-                if (typeof require !== 'undefined') {
-                    try {
-                        const { clipboard, nativeImage } = require('electron');
-                        const image = nativeImage.createFromDataURL(dataUrl);
-                        clipboard.writeImage(image);
-                        showToast("已成功复制图片到剪贴板！");
-                        showActionSheet(false);
-                        return;
-                    } catch (e) {
-                        console.error("Electron clipboard error:", e);
-                    }
+                const src = modalImg.getAttribute('data-src') || modalImg.src;
+                if (!src) return;
+                showActionSheet(false);
+                if (typeof copyImageToSystemClipboard === 'function') {
+                    copyImageToSystemClipboard(src, 'bitmap');
+                    return;
                 }
-
-                // Web 兼容降级
-                fetch(dataUrl)
-                    .then(res => res.blob())
-                    .then(blob => {
-                        navigator.clipboard.write([
-                            new ClipboardItem({ 'image/png': blob })
-                        ]).then(() => {
-                            showToast("已成功复制图片到剪贴板！");
-                            showActionSheet(false);
-                        }).catch(err => {
-                            console.error("Web clipboard write error:", err);
-                            navigator.clipboard.writeText(dataUrl).then(() => {
-                                showToast("已复制图片Base64数据");
-                                showActionSheet(false);
-                            });
-                        });
-                    });
+                showToast('当前环境不支持复制到系统剪贴板');
             }
 
             function showToast(message) {
@@ -1610,83 +1621,281 @@
             }
         };
 
-        // 右键菜单和图片粘贴功能
+        // ===== 右键菜单 · 图片粘贴（微信互通）· 任务提醒 =====
         let currentEditableElement = null;
-        
+        let currentContextImage = null;
+
+        // 轻量提示条：粘贴 / 复制 / 提醒反馈都用它，不依赖图片预览 Modal 里的 toast
+        let appToastEl = null;
+        function showAppToast(message) {
+            if (!appToastEl) {
+                appToastEl = document.createElement('div');
+                appToastEl.style.cssText = 'position:fixed;left:50%;bottom:60px;transform:translateX(-50%);' +
+                    'background:rgba(0,0,0,0.82);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;' +
+                    'z-index:999999;opacity:0;transition:opacity .25s;pointer-events:none;max-width:70vw;';
+                document.body.appendChild(appToastEl);
+            }
+            appToastEl.textContent = message;
+            appToastEl.style.opacity = '1';
+            clearTimeout(appToastEl._t);
+            appToastEl._t = setTimeout(() => { appToastEl.style.opacity = '0'; }, 2200);
+        }
+
+        /** 取元素上真正的图片地址（懒加载阶段真实地址在 data-src 上） */
+        function resolveImgSrc(img) {
+            if (!img) return '';
+            return img.getAttribute('data-src') || img.getAttribute('src') || '';
+        }
+
+        function noteIdOfEditable(el) {
+            if (!el) return NaN;
+            if (el.classList && el.classList.contains('table-content')) {
+                const parent = el.parentElement;
+                return parent ? parseInt(parent.getAttribute('data-note-id')) : NaN;
+            }
+            return parseInt(el.getAttribute('data-note-id'));
+        }
+
         document.addEventListener('contextmenu', (e) => {
             const target = e.target;
             const editable = target.closest('.note-content-editable, .table-content');
-            
-            if (editable) {
-                e.preventDefault();
-                currentEditableElement = editable;
-                
-                const menu = document.getElementById('contextMenu');
-                menu.style.left = e.pageX + 'px';
-                menu.style.top = e.pageY + 'px';
-                menu.classList.add('show');
-            }
+            if (!editable) return;
+
+            e.preventDefault();
+            currentEditableElement = editable;
+            currentContextImage = target.tagName === 'IMG' ? target : null;
+
+            const menu = document.getElementById('contextMenu');
+            const copyItem = document.getElementById('copyImageItem');
+            const copyFileItem = document.getElementById('copyImageFileItem');
+            if (copyItem) copyItem.style.display = currentContextImage ? 'block' : 'none';
+            if (copyFileItem) copyFileItem.style.display = currentContextImage ? 'block' : 'none';
+            // 卡片上随便右键都能「推送到表格」，不必非要点在图片上
+            const pushItem = document.getElementById('pushWebhookItem');
+            if (pushItem) pushItem.style.display = 'block';
+
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            menu.classList.add('show');
         });
-        
+
         document.addEventListener('click', () => {
             document.getElementById('contextMenu').classList.remove('show');
         });
-        
-        document.getElementById('pasteImageItem').onclick = async () => {
-            if (!currentEditableElement) return;
-            
-            // 先获取元素引用，后面可能被重置
-            const editable = currentEditableElement;
-            
+
+        /** 把一张图片写进系统剪贴板（mode: bitmap 位图 / file 文件，微信两种都能粘） */
+        async function copyImageToSystemClipboard(src, mode) {
+            if (typeof require === 'undefined') {
+                showAppToast('当前环境不支持复制到系统剪贴板');
+                return;
+            }
             try {
-                const items = await navigator.clipboard.read();
-                
-                for (const item of items) {
-                    if (item.types.includes('image/png') || item.types.includes('image/jpeg') || item.types.includes('image/webp') || item.types.includes('image/gif')) {
-                        const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
-                        
-                        // 将blob转换为base64
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            const base64Data = reader.result;
-                            
-                            const img = document.createElement('img');
-                            img.src = base64Data;
-                            img.style.maxWidth = '100%';
-                            img.style.maxHeight = '200px';
-                            img.style.objectFit = 'contain';
-                            img.style.borderRadius = '8px';
-                            img.style.margin = '4px 0';
-                            
-                            editable.appendChild(img);
-                            
-                            // 检查是表格视图还是卡片视图
-                            if (editable.classList.contains('table-content')) {
-                                const noteId = parseInt(editable.parentElement.getAttribute('data-note-id'));
-                                const n = notes.find(x => x.id === noteId);
-                                if (n) {
-                                    n.content = editable.innerHTML;
-                                    save();
-                                    console.log('表格视图图片已保存');
-                                }
-                            } else {
-                                updateNoteContent(editable);
-                                console.log('卡片视图图片已保存');
-                            }
-                        };
-                        reader.readAsDataURL(blob);
-                        break;
+                const { ipcRenderer } = require('electron');
+                let target = src;
+                if (!/^data:image/.test(src)) {
+                    if (/^https?:/i.test(src)) {
+                        target = await ipcRenderer.invoke('save-note-image-source', { url: src });
+                    } else if (/^file:|^[a-zA-Z]:[\\/]/.test(src)) {
+                        target = await ipcRenderer.invoke('save-note-image-source', { path: src });
                     }
                 }
+                const res = await ipcRenderer.invoke('clipboard:write-image', target, mode || 'bitmap');
+                if (res && res.ok) {
+                    showAppToast(mode === 'file' ? '已复制为图片文件，可粘贴到微信' : '已复制图片，可粘贴到微信');
+                } else {
+                    showAppToast('复制失败：' + ((res && res.error) || '未知错误'));
+                }
             } catch (err) {
-                console.error('粘贴图片失败:', err);
-                alert('粘贴图片失败，请尝试使用Ctrl+V粘贴');
+                console.error('复制图片失败:', err);
+                showAppToast('复制失败：' + err.message);
             }
-            
+        }
+
+        /** 从系统剪贴板读图（微信 / 截图工具复制的位图也能读出来）并存成本地文件 */
+        async function readClipboardImageFileUrl() {
+            if (typeof require === 'undefined') return null;
+            const { ipcRenderer } = require('electron');
+            const res = await ipcRenderer.invoke('clipboard:read-image');
+            if (!res || !res.ok || !res.dataUrl) return null;
+            return await ipcRenderer.invoke('save-note-image', res.dataUrl);
+        }
+
+        /** 任意图片地址 → 本库文件 URL（file:// 会先入库，避免原文件被清理后裂图） */
+        async function localizeImageSrc(src) {
+            if (!src) return null;
+            if (/^data:image/.test(src)) {
+                if (typeof require === 'undefined') return src;
+                try {
+                    const { ipcRenderer } = require('electron');
+                    return await ipcRenderer.invoke('save-note-image', src);
+                } catch (e) {
+                    return src;
+                }
+            }
+            if (/^https?:/i.test(src) || /^file:/i.test(src)) {
+                if (typeof require === 'undefined') return src;
+                try {
+                    const { ipcRenderer } = require('electron');
+                    return await ipcRenderer.invoke('save-note-image-source',
+                        /^https?:/i.test(src) ? { url: src } : { path: src });
+                } catch (e) {
+                    console.warn('图片本地化失败，保留原地址:', e.message);
+                    return src;
+                }
+            }
+            return src;
+        }
+
+        function insertImageIntoEditable(editable, fileUrl) {
+            const img = document.createElement('img');
+            img.src = fileUrl;
+            img.style.maxWidth = '100%';
+            img.style.maxHeight = '200px';
+            img.style.objectFit = 'contain';
+            img.style.borderRadius = '8px';
+            img.style.margin = '4px 0';
+
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                if (editable.contains(range.commonAncestorContainer)) {
+                    range.deleteContents();
+                    range.insertNode(img);
+                    range.setStartAfter(img);
+                    range.setEndAfter(img);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    return img;
+                }
+            }
+            editable.appendChild(img);
+            return img;
+        }
+
+        function persistEditable(editable) {
+            if (!editable) return;
+            if (editable.classList && editable.classList.contains('table-content')) {
+                const noteId = noteIdOfEditable(editable);
+                const n = notes.find(x => x.id === noteId);
+                if (n) {
+                    n.content = editable.innerHTML;
+                    save();
+                }
+            } else {
+                updateNoteContent(editable);
+            }
+        }
+
+        function fileToDataUrl(file) {
+            return new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function extractImgSrcs(html) {
+            const out = [];
+            if (!html) return out;
+            const div = document.createElement('div');
+            div.innerHTML = html;
+            div.querySelectorAll('img').forEach(img => {
+                const src = img.getAttribute('src');
+                if (src) out.push(src);
+            });
+            return out;
+        }
+
+        /** 统一的「往某个可编辑区粘贴一张图」主流程 */
+        async function pasteImageIntoEditable(editable) {
+            if (!editable) return false;
+            const fileUrl = await readClipboardImageFileUrl();
+            if (!fileUrl) return false;
+            insertImageIntoEditable(editable, fileUrl);
+            persistEditable(editable);
+            return true;
+        }
+
+        document.getElementById('pasteImageItem').onclick = async () => {
+            const editable = currentEditableElement;
             document.getElementById('contextMenu').classList.remove('show');
+            if (!editable) return;
+            const ok = await pasteImageIntoEditable(editable);
+            if (!ok) showAppToast('剪贴板里没有图片');
             currentEditableElement = null;
         };
-        
+
+        document.getElementById('copyImageItem').onclick = () => {
+            const img = currentContextImage;
+            document.getElementById('contextMenu').classList.remove('show');
+            if (!img) return;
+            copyImageToSystemClipboard(resolveImgSrc(img), 'bitmap');
+        };
+
+        document.getElementById('copyImageFileItem').onclick = () => {
+            const img = currentContextImage;
+            document.getElementById('contextMenu').classList.remove('show');
+            if (!img) return;
+            copyImageToSystemClipboard(resolveImgSrc(img), 'file');
+        };
+
+        // 把这条任务推送到外部表格（WebHook）
+        document.getElementById('pushWebhookItem').onclick = () => {
+            const editable = currentEditableElement;
+            document.getElementById('contextMenu').classList.remove('show');
+            if (!editable) return;
+            const noteId = noteIdOfEditable(editable);
+            const note = notes.find(x => x.id === noteId) || archivedNotes.find(x => x.id === noteId);
+            if (!note) return;
+            if (typeof require === 'undefined') {
+                showAppToast('当前环境不支持 WebHook 推送');
+                return;
+            }
+            const { ipcRenderer } = require('electron');
+            ipcRenderer.invoke('webhook:push', {
+                action: note.done ? 'completed' : 'created',
+                tasks: [note]
+            }).then(() => showAppToast('已推送到表格'));
+        };
+
+        // 给任务设置提醒时间（M14-3）
+        document.getElementById('remindTaskItem').onclick = () => {
+            const editable = currentEditableElement;
+            document.getElementById('contextMenu').classList.remove('show');
+            if (!editable) return;
+            const noteId = noteIdOfEditable(editable);
+            const note = notes.find(x => x.id === noteId) || archivedNotes.find(x => x.id === noteId);
+            if (!note) return;
+            const current = note.remindAt ? formatDateInput(note.remindAt) : '';
+            const input = prompt('设置提醒时间（格式 2026-09-28 18:00，留空则清除提醒）', current);
+            if (input === null) return;
+            const text = String(input).trim();
+            if (!text) {
+                delete note.remindAt;
+                showAppToast('已清除提醒');
+            } else {
+                const ts = new Date(text.replace(' ', 'T')).getTime();
+                if (isNaN(ts)) {
+                    showAppToast('时间格式无法识别，示例：2026-09-28 18:00');
+                    return;
+                }
+                note.remindAt = ts;
+                showAppToast('已设置提醒：' + formatDate(ts));
+            }
+            if (archivedNotes.indexOf(note) !== -1) {
+                saveArchive();
+            } else {
+                save();
+            }
+        };
+
+        function formatDateInput(ts) {
+            const d = new Date(ts);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
+
         function handleNoteBlur(editable) {
             updateNoteContent(editable);
         }
@@ -1697,71 +1906,103 @@
             }
         }
 
-        // 处理粘贴事件，支持Ctrl+V粘贴图片
+        /**
+         * 粘贴事件：三级兜底，保证「微信 ↔ 本应用」双向都能粘图
+         *   ① 剪贴板带文件（截图工具、资源管理器复制的图片文件）
+         *   ② 剪贴板带 HTML（Word / 网页 / 部分聊天软件会给 <img src="file://…">）
+         *   ③ 剪贴板只有位图（微信截图最常见）—— 网页事件里一个条目都拿不到，
+         *      只能由主进程直接从系统剪贴板读取
+         */
         document.addEventListener('paste', async (e) => {
             const target = e.target;
-            const editable = target.closest('.note-content-editable, .table-content');
-            
-            if (editable && e.clipboardData && e.clipboardData.files.length > 0) {
-                for (let i = 0; i < e.clipboardData.files.length; i++) {
-                    const file = e.clipboardData.files[i];
-                    if (file.type.startsWith('image/')) {
-                        e.preventDefault();
-                        
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                            const base64Data = reader.result;
-                            
-                            let fileUrl = base64Data;
-                            if (typeof require !== 'undefined') {
-                                try {
-                                    const { ipcRenderer } = require('electron');
-                                    fileUrl = await ipcRenderer.invoke('save-note-image', base64Data);
-                                } catch (err) {
-                                    console.error('粘贴图片并写入本地失败:', err);
-                                }
-                            }
-                            
-                            const img = document.createElement('img');
-                            img.src = fileUrl;
-                            img.style.maxWidth = '100%';
-                            img.style.maxHeight = '200px';
-                            img.style.objectFit = 'contain';
-                            img.style.borderRadius = '8px';
-                            img.style.margin = '4px 0';
-                            
-                            const selection = window.getSelection();
-                            if (selection.rangeCount > 0) {
-                                const range = selection.getRangeAt(0);
-                                range.deleteContents();
-                                range.insertNode(img);
-                                range.setStartAfter(img);
-                                range.setEndAfter(img);
-                                selection.removeAllRanges();
-                                selection.addRange(range);
-                            } else {
-                                editable.appendChild(img);
-                            }
-                            
-                            // 保存内容
-                            if (editable.classList.contains('table-content')) {
-                                const noteId = parseInt(editable.parentElement.getAttribute('data-note-id'));
-                                const n = notes.find(x => x.id === noteId);
-                                if (n) {
-                                    n.content = editable.innerHTML;
-                                    save();
-                                }
-                            } else {
-                                updateNoteContent(editable);
-                            }
-                        };
-                        reader.readAsDataURL(file);
-                        break;
+            const editable = target.closest('.note-content-editable, .table-content, .note-input');
+            if (!editable) return;
+
+            const cd = e.clipboardData;
+
+            // ① 文件
+            if (cd && cd.files && cd.files.length > 0) {
+                let handled = false;
+                for (const file of Array.from(cd.files)) {
+                    if (!file.type || !file.type.startsWith('image/')) continue;
+                    e.preventDefault();
+                    handled = true;
+                    const dataUrl = await fileToDataUrl(file);
+                    if (!dataUrl) continue;
+                    const fileUrl = await localizeImageSrc(dataUrl);
+                    insertImageIntoEditable(editable, fileUrl);
+                    persistEditable(editable);
+                }
+                if (handled) {
+                    showAppToast('图片已粘贴');
+                    return;
+                }
+            }
+
+            // ② HTML 里夹带的图片
+            if (cd) {
+                const html = cd.getData('text/html');
+                const srcs = extractImgSrcs(html);
+                if (srcs.length > 0) {
+                    e.preventDefault();
+                    let inserted = 0;
+                    for (const src of srcs) {
+                        const fileUrl = await localizeImageSrc(src);
+                        if (!fileUrl) continue;
+                        insertImageIntoEditable(editable, fileUrl);
+                        inserted++;
+                    }
+                    if (inserted > 0) {
+                        persistEditable(editable);
+                        showAppToast('图片已粘贴');
+                        return;
                     }
                 }
             }
+
+            // ③ 纯位图（微信 / Win+Shift+S）
+            const hasText = cd ? !!cd.getData('text/plain') : false;
+            if (!hasText) {
+                const ok = await pasteImageIntoEditable(editable);
+                if (ok) {
+                    e.preventDefault();
+                    showAppToast('图片已粘贴');
+                    return;
+                }
+            }
+
+            // 文本：输入框一律按纯文本粘贴，避免把外部样式带进任务里
+            if (editable.id === 'noteInput' && cd) {
+                const text = cd.getData('text/plain');
+                if (text) {
+                    e.preventDefault();
+                    document.execCommand('insertText', false, text);
+                }
+            }
         });
-        
+
+        // Ctrl+C 选中的是图片时直接把位图写进系统剪贴板；
+        // 否则默认只复制一段 <img src="file://…"> 的 HTML，微信等外部软件根本用不了
+        document.addEventListener('copy', (e) => {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+            const editable = e.target.closest && e.target.closest('.note-content-editable, .table-content, .note-input');
+            if (!editable) return;
+            if (String(sel).trim()) return; // 有文字就交给默认逻辑
+
+            let imgs = [];
+            try {
+                const frag = sel.getRangeAt(0).cloneContents();
+                imgs = Array.from(frag.querySelectorAll ? frag.querySelectorAll('img') : []);
+            } catch (err) {
+                return;
+            }
+            if (imgs.length === 0) return;
+            e.preventDefault();
+            copyImageToSystemClipboard(resolveImgSrc(imgs[0]), 'bitmap');
+        });
+
+
         function updateNoteContent(editable) {
             const noteId = parseInt(editable.getAttribute('data-note-id'));
             if (!isNaN(noteId)) {
@@ -1981,54 +2222,8 @@
             }
         };
         
-        // 处理输入框粘贴图片
-        document.getElementById('noteInput').addEventListener('paste', async (e) => {
-            e.preventDefault();
-            const items = e.clipboardData?.items;
-            if (!items) return;
-            
-            for (const item of items) {
-                if (item.type.startsWith('image/')) {
-                    const blob = item.getAsFile();
-                    if (blob) {
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                            const base64Data = reader.result;
-                            let fileUrl = base64Data;
-                            if (typeof require !== 'undefined') {
-                                try {
-                                    const { ipcRenderer } = require('electron');
-                                    fileUrl = await ipcRenderer.invoke('save-note-image', base64Data);
-                                } catch (err) {
-                                    console.error('粘贴图片到输入框并写入本地失败:', err);
-                                }
-                            }
-                            
-                            const img = document.createElement('img');
-                            img.src = fileUrl;
-                            img.style.maxWidth = '100%';
-                            img.style.maxHeight = '200px';
-                            img.style.objectFit = 'contain';
-                            img.style.borderRadius = '8px';
-                            img.style.margin = '4px 0';
-                            
-                            document.getElementById('noteInput').appendChild(img);
-                        };
-                        reader.readAsDataURL(blob);
-                    }
-                } else if (item.kind === 'string' && item.type === 'text/plain') {
-                    item.getAsString((text) => {
-                        const sel = window.getSelection();
-                        if (sel.rangeCount > 0) {
-                            const range = sel.getRangeAt(0);
-                            range.deleteContents();
-                            range.insertNode(document.createTextNode(text));
-                        }
-                    });
-                }
-            }
-        });
-        
+        // 输入框粘贴已并入全局 paste 处理器（支持微信位图 / 图片文件 / HTML 图片 / 纯文本）
+
         // 处理输入框回车添加笔记
         document.getElementById('noteInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -2752,17 +2947,22 @@
         const normalFontSizeSlider = document.getElementById('normalFontSizeSlider');
         const normalFontSizeValue = document.getElementById('normalFontSizeValue');
         
-        const updateTimerFontSize = () => {
+        // 用函数声明（有提升）：启动时「恢复纯净模式」会在定义之前调用它；
+        // 元素实时获取而不是引用下方 const，避免初始化顺序问题
+        function updateTimerFontSize() {
             const timeText = document.getElementById('timeText');
-            const normalSize = normalFontSizeSlider.value / 100;
-            const cleanSize = cleanFontSizeSlider.value / 100;
-            
+            const normalSlider = document.getElementById('normalFontSizeSlider');
+            const cleanSlider = document.getElementById('cleanFontSizeSlider');
+            if (!timeText || !normalSlider || !cleanSlider) return;
+            const normalSize = normalSlider.value / 100;
+            const cleanSize = cleanSlider.value / 100;
+
             if (isCleanMode) {
                 timeText.style.fontSize = (200 * cleanSize) + 'px';
             } else {
                 timeText.style.fontSize = (100 * normalSize) + 'px';
             }
-        };
+        }
         
         normalFontSizeSlider.oninput = () => {
             normalFontSizeValue.textContent = normalFontSizeSlider.value + '%';
@@ -2846,17 +3046,19 @@
         const shadowSizeSlider = document.getElementById('shadowSizeSlider');
         const shadowSizeValue = document.getElementById('shadowSizeValue');
 
-        // 更新发光效果显示 - 直接修改样式
-        const updateGlowEffect = () => {
+        // 更新发光效果显示 - 直接修改样式（同样用函数声明 + 实时取元素，避免启动期 TDZ 报错）
+        function updateGlowEffect() {
             const timeEl = document.querySelector('.time');
-            if (glowEnabled.checked) {
-                const color = glowColorPicker.value;
-                const intensity = glowIntensitySlider.value;
+            const glowToggle = document.getElementById('glowEnabled');
+            if (!timeEl || !glowToggle) return;
+            if (glowToggle.checked) {
+                const color = document.getElementById('glowColorPicker').value;
+                const intensity = document.getElementById('glowIntensitySlider').value;
                 timeEl.style.textShadow = `0 0 ${intensity}px ${color}, 0 0 ${intensity * 2}px ${color}`;
             } else {
                 timeEl.style.textShadow = 'none';
             }
-        };
+        }
 
         timerColorPicker.oninput = () => {
             const color = timerColorPicker.value;
@@ -3288,6 +3490,11 @@
             // 类型过滤
             if (currentTypeView === 'short') filtered = filtered.filter(x => x.type === 'short');
             if (currentTypeView === 'long') filtered = filtered.filter(x => x.type === 'long');
+
+            // 关键词搜索（与卡片视图同一套规则）
+            if (searchKeyword) {
+                filtered = filtered.filter(x => matchKeyword(x, searchKeyword));
+            }
             
             filtered.sort((a, b) => {
                 // 1. 先按完成状态排序：已完成的放下面
@@ -3586,4 +3793,522 @@
                 }
             };
             input.click();
+        };
+
+        // ============ 本地 AI 接入 API：渲染进程执行端 ============
+        // 任务的真实数据在渲染进程里，API 收到的操作最终由这里执行，
+        // 因此「AI 注入」和「手动添加」走的是同一条保存链路（含图片回收与悬浮窗同步）。
+        if (isElectron) {
+            const { ipcRenderer } = require('electron');
+
+            function nextNoteId() {
+                let id = Date.now();
+                while (notes.some(n => n.id === id)) id++;
+                return id;
+            }
+
+            function applyTaskPatch(note, patch) {
+                if (patch.content !== undefined) note.content = patch.content;
+                if (patch.p !== undefined) note.p = patch.p;
+                if (patch.type !== undefined) note.type = patch.type;
+                if (patch.tags !== undefined) note.tags = patch.tags;
+                if (patch.done !== undefined) {
+                    note.done = !!patch.done;
+                    if (note.done && !note.doneTime) note.doneTime = Date.now();
+                    if (!note.done) delete note.doneTime;
+                }
+                if (patch.remindAt !== undefined) {
+                    if (patch.remindAt) note.remindAt = patch.remindAt;
+                    else delete note.remindAt;
+                }
+                if (patch.appendText) {
+                    note.content = (note.content || '') + '<br>' + String(patch.appendText).replace(/\r?\n/g, '<br>');
+                }
+            }
+
+            function findNoteAnywhere(id) {
+                const note = notes.find(n => n.id === id);
+                if (note) return { note: note, archived: false };
+                const archived = archivedNotes.find(n => n.id === id);
+                return archived ? { note: archived, archived: true } : null;
+            }
+
+            ipcRenderer.on('api:task-request', async (event, req) => {
+                const op = req.op;
+                const p = req.payload || {};
+                const reply = (ok, data, error) =>
+                    ipcRenderer.send('api:task-reply', { reqId: req.reqId, ok: ok, data: data, error: error });
+
+                try {
+                    switch (op) {
+                        case 'list':
+                            reply(true, { notes: notes, archived: archivedNotes });
+                            break;
+
+                        case 'get': {
+                            const found = findNoteAnywhere(p.id);
+                            reply(true, found ? found.note : null);
+                            break;
+                        }
+
+                        case 'add': {
+                            const t = p.task || {};
+                            const now = Date.now();
+                            const note = {
+                                id: nextNoteId(),
+                                content: t.content,
+                                done: !!t.done,
+                                p: t.p || 1,
+                                type: t.type || 'short',
+                                comments: t.comments || [],
+                                ts: now
+                            };
+                            if (t.remindAt) note.remindAt = t.remindAt;
+                            if (t.tags) note.tags = t.tags;
+                            if (note.done) note.doneTime = now;
+                            // top=false 时追加到末尾，默认与手动添加一致放在最前
+                            if (t.top === false) notes.push(note);
+                            else notes.unshift(note);
+                            save();
+                            reply(true, note);
+                            break;
+                        }
+
+                        case 'update': {
+                            const found = findNoteAnywhere(p.id);
+                            if (!found) { reply(false, null, '任务不存在：' + p.id); break; }
+                            applyTaskPatch(found.note, p.patch || {});
+                            if (found.archived) saveArchive(); else save();
+                            reply(true, found.note);
+                            break;
+                        }
+
+                        case 'remove': {
+                            let removed = false;
+                            const before = notes.length;
+                            notes = notes.filter(n => n.id !== p.id);
+                            if (notes.length !== before) removed = true;
+                            const ai = archivedNotes.findIndex(n => n.id === p.id);
+                            if (ai !== -1) { archivedNotes.splice(ai, 1); removed = true; }
+                            if (removed) { save(); saveArchive(); }
+                            reply(true, { id: p.id, removed: removed });
+                            break;
+                        }
+
+                        case 'comment': {
+                            const found = findNoteAnywhere(p.id);
+                            if (!found) { reply(false, null, '任务不存在：' + p.id); break; }
+                            if (!found.note.comments) found.note.comments = [];
+                            found.note.comments.push({ text: String(p.text), time: Date.now() });
+                            if (found.archived) saveArchive(); else save();
+                            reply(true, found.note);
+                            break;
+                        }
+
+                        default:
+                            reply(false, null, '未知操作：' + op);
+                    }
+                } catch (err) {
+                    console.error('[api] 任务操作执行失败：', err);
+                    reply(false, null, err.message);
+                }
+            });
+
+            // 任务到点提醒（由主进程轮询触发）
+            ipcRenderer.on('task-reminder', (event, data) => {
+                showAppToast('⏰ ' + (data && data.text ? data.text : '任务到点了'));
+            });
+
+            // 全局快捷键：Ctrl+Alt+N 快速记录
+            ipcRenderer.on('global-shortcut', (event, data) => {
+                if (data && data.action === 'quick-add') {
+                    const input = document.getElementById('noteInput');
+                    if (input) input.focus();
+                }
+            });
+
+            // API 改设置后让界面跟着变：复用面板里已有的控件与其事件处理
+            const SETTING_CONTROL_MAP = {
+                timerColor: 'timerColorPicker',
+                glowColor: 'glowColorPicker',
+                glowIntensity: 'glowIntensitySlider',
+                glowEnabled: 'glowEnabled',
+                shadowColor: 'shadowColorPicker',
+                shadowSize: 'shadowSizeSlider',
+                darknessLevel: 'darknessSlider',
+                timerVolume: 'volumeSlider',
+                normalFontSize: 'normalFontSizeSlider',
+                cleanFontSize: 'cleanFontSizeSlider',
+                modeLabelSize: 'modeLabelSizeSlider',
+                containerWidth: 'containerWidthSlider',
+                floatShowTask: 'floatShowTask',
+                floatShowImages: 'floatShowImages',
+                floatImageLimit: 'floatImageLimit'
+            };
+
+            function applySettingViaUi(key, value) {
+                const id = SETTING_CONTROL_MAP[key];
+                const el = id ? document.getElementById(id) : null;
+                if (!el) {
+                    localStorage.setItem(key, String(value));
+                    return;
+                }
+                if (el.type === 'checkbox') el.checked = (String(value) === 'true');
+                else el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            ipcRenderer.on('api:apply-setting', (event, data) => {
+                if (!data || data.key === undefined) return;
+                try {
+                    applySettingViaUi(data.key, data.value);
+                } catch (e) {
+                    console.warn('[api] 应用设置失败：', data.key, e.message);
+                }
+            });
+
+            // ============ 设置面板：AI 接口 / 开机自启 / 快捷键 / 提醒 ============
+            const apiEnabledEl = document.getElementById('apiEnabled');
+            const apiPortEl = document.getElementById('apiPort');
+            const apiTokenEl = document.getElementById('apiToken');
+            const apiStatusEl = document.getElementById('apiStatus');
+            const apiTokenRegenEl = document.getElementById('apiTokenRegen');
+            const apiCopyExampleEl = document.getElementById('apiCopyExample');
+            const autoLaunchEl = document.getElementById('autoLaunchToggle');
+            const globalShortcutEl = document.getElementById('globalShortcutToggle');
+            const reminderEl = document.getElementById('reminderToggle');
+
+            function renderApiStatus(info) {
+                if (!apiStatusEl || !info) return;
+                if (info.enabled && info.running) {
+                    apiStatusEl.innerHTML =
+                        '接口运行中：<b>' + info.url + '/api/health</b><br>' +
+                        (info.tokenRequired ? '调用需带令牌（请求头 X-Api-Token）' : '未启用令牌校验（仅限本机访问）') +
+                        (info.error ? '<br><span style="color:#ef9a9a">错误：' + info.error + '</span>' : '');
+                } else if (info.enabled) {
+                    apiStatusEl.innerHTML = '<span style="color:#ef9a9a">接口未能启动' +
+                        (info.error ? '：' + info.error : '（端口可能被占用）') + '</span>';
+                } else {
+                    apiStatusEl.textContent = '接口已关闭。开启后，AI / 脚本可通过本机 HTTP 接口直接注入任务与图片。';
+                }
+            }
+
+            async function refreshMainSettings() {
+                try {
+                    const res = await ipcRenderer.invoke('main-settings:get');
+                    const s = res.settings || {};
+                    if (apiEnabledEl) apiEnabledEl.checked = !!(s.api && s.api.enabled);
+                    if (apiPortEl) apiPortEl.value = (s.api && s.api.port) || 17890;
+                    if (apiTokenEl) apiTokenEl.value = (s.api && s.api.token) || '';
+                    if (autoLaunchEl) autoLaunchEl.checked = !!s.autolaunch;
+                    if (globalShortcutEl) globalShortcutEl.checked = s.globalShortcuts !== false;
+                    if (reminderEl) reminderEl.checked = s.reminders !== false;
+                    renderApiStatus(res.api);
+                } catch (e) {
+                    console.error('[settings] 读取主设置失败：', e);
+                }
+            }
+
+            refreshMainSettings();
+
+            if (apiEnabledEl) {
+                apiEnabledEl.onchange = async () => {
+                    const res = await ipcRenderer.invoke('main-settings:set', { api: { enabled: apiEnabledEl.checked } });
+                    renderApiStatus(res.api);
+                    showAppToast(res.api && res.api.running ? 'AI 接口已开启' : 'AI 接口已关闭');
+                };
+            }
+            if (apiPortEl) {
+                apiPortEl.onchange = async () => {
+                    const port = parseInt(apiPortEl.value, 10) || 17890;
+                    const res = await ipcRenderer.invoke('main-settings:set', { api: { port: port } });
+                    renderApiStatus(res.api);
+                };
+            }
+            if (apiTokenRegenEl) {
+                apiTokenRegenEl.onclick = async () => {
+                    const info = await ipcRenderer.invoke('api:regenerate-token');
+                    if (apiTokenEl) apiTokenEl.value = info.token || '';
+                    renderApiStatus(info);
+                    showAppToast('已重新生成令牌');
+                };
+            }
+            if (apiCopyExampleEl) {
+                apiCopyExampleEl.onclick = async () => {
+                    try {
+                        const text = await ipcRenderer.invoke('api:example');
+                        const { clipboard } = require('electron');
+                        clipboard.writeText(text);
+                        showAppToast('调用示例已复制，可直接贴给 AI');
+                    } catch (e) {
+                        showAppToast('复制示例失败：' + e.message);
+                    }
+                };
+            }
+            if (autoLaunchEl) {
+                autoLaunchEl.onchange = async () => {
+                    await ipcRenderer.invoke('main-settings:set', { autolaunch: autoLaunchEl.checked });
+                };
+            }
+            if (globalShortcutEl) {
+                globalShortcutEl.onchange = async () => {
+                    await ipcRenderer.invoke('main-settings:set', { globalShortcuts: globalShortcutEl.checked });
+                };
+            }
+            if (reminderEl) {
+                reminderEl.onchange = async () => {
+                    await ipcRenderer.invoke('main-settings:set', { reminders: reminderEl.checked });
+                };
+            }
+
+            // ============ WebHook 同步设置 ============
+            const whEnabledEl = document.getElementById('webhookEnabled');
+            const whUrlEl = document.getElementById('webhookUrl');
+            const whModeEl = document.getElementById('webhookMode');
+            const whSchemaJsonEl = document.getElementById('webhookSchemaJson');
+            const whWecomBoxEl = document.getElementById('webhookWecomBox');
+            const whFieldRowsEl = document.getElementById('webhookFieldRows');
+            const whParseEl = document.getElementById('webhookParseBtn');
+            const whTemplateRowEl = document.getElementById('webhookTemplateRow');
+            const whTemplateEl = document.getElementById('webhookTemplate');
+            const whGenericBoxEl = document.getElementById('webhookGenericBox');
+            const whFieldsEl = document.getElementById('webhookFields');
+            const whSaveEl = document.getElementById('webhookSaveBtn');
+            const whTestEl = document.getElementById('webhookTestBtn');
+            const whLogEl = document.getElementById('webhookLog');
+            const whEventEls = {
+                created: document.getElementById('whEvCreated'),
+                updated: document.getElementById('whEvUpdated'),
+                completed: document.getElementById('whEvCompleted'),
+                archived: document.getElementById('whEvArchived'),
+                deleted: document.getElementById('whEvDeleted')
+            };
+
+            let whSources = [];       // 可选数据源（主进程给）
+            let whSchemaFields = [];  // 从示例 JSON 解析出来的表格列
+            let whMapping = {};       // 字段 ID → 数据源
+
+            function fieldsToText(fields) {
+                return Object.keys(fields || {}).map(k => k + '=' + fields[k]).join('\n');
+            }
+
+            function textToFields(text) {
+                const out = {};
+                String(text || '').split('\n').forEach(line => {
+                    const i = line.indexOf('=');
+                    if (i <= 0) return;
+                    const k = line.slice(0, i).trim();
+                    const v = line.slice(i + 1).trim();
+                    if (k) out[k] = v;
+                });
+                return out;
+            }
+
+            function collectWebhookEvents() {
+                const events = {};
+                for (const key of Object.keys(whEventEls)) {
+                    events[key] = !!(whEventEls[key] && whEventEls[key].checked);
+                }
+                return events;
+            }
+
+            /** 按当前模式显示 / 隐藏对应设置块 */
+            function updateWebhookBoxes() {
+                const mode = whModeEl ? whModeEl.value : 'wecom';
+                if (whWecomBoxEl) whWecomBoxEl.style.display = mode === 'wecom' ? 'block' : 'none';
+                if (whTemplateRowEl) whTemplateRowEl.style.display = mode === 'custom' ? 'block' : 'none';
+                if (whGenericBoxEl) {
+                    whGenericBoxEl.style.display = (mode === 'records' || mode === 'flat' || mode === 'custom') ? 'block' : 'none';
+                }
+            }
+
+            /** 每个表格列一行：列名 + 下拉框（选这条数据从哪来） */
+            function renderWebhookFieldRows() {
+                if (!whFieldRowsEl) return;
+                if (!whSchemaFields.length) {
+                    whFieldRowsEl.innerHTML = '<div style="font-size: 12px; color: #888;">还没有解析到字段。把示例 JSON 粘到上面，点「解析字段」。</div>';
+                    return;
+                }
+                whFieldRowsEl.innerHTML = whSchemaFields.map(f => {
+                    const current = whMapping[f.id] || '';
+                    const options = whSources.map(s =>
+                        '<option value="' + s.key + '"' + (current === s.key ? ' selected' : '') + '>' + s.label + '</option>'
+                    ).join('');
+                    return '<div style="display: flex; align-items: center; gap: 6px;">' +
+                        '<span style="flex: 1; min-width: 0; font-size: 12px; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + f.id + ' / ' + f.type + '">' +
+                        f.name + '<span style="color: #666;"> · ' + f.type + '</span></span>' +
+                        '<select data-field-id="' + f.id + '" class="wh-map-select" style="width: 148px; padding: 4px 6px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">' +
+                        options + '</select></div>';
+                }).join('');
+                whFieldRowsEl.querySelectorAll('.wh-map-select').forEach(sel => {
+                    sel.onchange = () => { whMapping[sel.getAttribute('data-field-id')] = sel.value; };
+                });
+            }
+
+            function renderWebhookLog(history) {
+                if (!whLogEl) return;
+                if (!history || !history.length) {
+                    whLogEl.textContent = '暂无推送记录。点「发送测试」验证地址与字段映射是否可用。';
+                    return;
+                }
+                whLogEl.innerHTML = history.slice(0, 8).map(item => {
+                    const t = new Date(item.time);
+                    const p = n => String(n).padStart(2, '0');
+                    const time = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+                    const color = item.ok ? '#81c784' : '#ef9a9a';
+                    const detail = item.ok
+                        ? 'HTTP ' + item.status + ' · ' + item.count + ' 条'
+                        : ('失败：' + (item.error || ('HTTP ' + item.status)));
+                    return `<div>[${time}] ${item.action} <span style="color: ${color};">${detail}</span></div>`;
+                }).join('');
+            }
+
+            function fillWebhookForm(data) {
+                const cfg = (data && data.config) || {};
+                if (data && data.sources) whSources = data.sources;
+                whSchemaFields = Array.isArray(cfg.schemaFields) ? cfg.schemaFields : [];
+                whMapping = Object.assign({}, cfg.mapping || {});
+                if (whEnabledEl) whEnabledEl.checked = !!cfg.enabled;
+                if (whUrlEl) whUrlEl.value = cfg.url || '';
+                if (whModeEl) whModeEl.value = cfg.mode || 'wecom';
+                if (whSchemaJsonEl && cfg.schemaJson) whSchemaJsonEl.value = cfg.schemaJson;
+                if (whTemplateEl) whTemplateEl.value = cfg.template || '';
+                if (whFieldsEl) whFieldsEl.value = fieldsToText(cfg.fields);
+                for (const key of Object.keys(whEventEls)) {
+                    const el = whEventEls[key];
+                    if (el) el.checked = !!(cfg.events && cfg.events[key]);
+                }
+                updateWebhookBoxes();
+                renderWebhookFieldRows();
+            }
+
+            async function refreshWebhook() {
+                try {
+                    const res = await ipcRenderer.invoke('webhook:get');
+                    fillWebhookForm(res);
+                    renderWebhookLog(res.history);
+                } catch (e) {
+                    console.error('[webhook] 读取配置失败：', e);
+                }
+            }
+
+            refreshWebhook();
+
+            if (whModeEl) whModeEl.onchange = updateWebhookBoxes;
+
+            if (whEnabledEl) {
+                whEnabledEl.onchange = async () => {
+                    const res = await ipcRenderer.invoke('webhook:set', { enabled: whEnabledEl.checked });
+                    fillWebhookForm(res);
+                    showAppToast(whEnabledEl.checked ? '已开启同步' : '已关闭同步');
+                };
+            }
+
+            if (whParseEl) {
+                whParseEl.onclick = async () => {
+                    const text = whSchemaJsonEl ? whSchemaJsonEl.value.trim() : '';
+                    if (!text) {
+                        showAppToast('先粘贴「接收外部数据」页面里的示例 JSON');
+                        return;
+                    }
+                    const res = await ipcRenderer.invoke('webhook:set', { parseSchemaOnly: text });
+                    const count = res.config.schemaFields ? res.config.schemaFields.length : 0;
+                    if (!count) {
+                        showAppToast('没解析出字段，请确认粘的是示例 JSON');
+                        return;
+                    }
+                    fillWebhookForm(res);
+                    showAppToast('解析到 ' + count + ' 个字段，已自动匹配，请核对下面每一项');
+                };
+            }
+
+            /** 保存当前表单（推送前也先存一遍，避免测的是旧配置） */
+            async function saveWebhookForm() {
+                return await ipcRenderer.invoke('webhook:set', {
+                    url: whUrlEl ? whUrlEl.value : '',
+                    mode: whModeEl ? whModeEl.value : 'wecom',
+                    template: whTemplateEl ? whTemplateEl.value : '',
+                    events: collectWebhookEvents(),
+                    fields: textToFields(whFieldsEl ? whFieldsEl.value : ''),
+                    mapping: whMapping
+                });
+            }
+
+            if (whSaveEl) {
+                whSaveEl.onclick = async () => {
+                    const res = await saveWebhookForm();
+                    fillWebhookForm(res);
+                    renderWebhookLog(res.history);
+                    showAppToast('WebHook 设置已保存');
+                };
+            }
+
+            if (whTestEl) {
+                whTestEl.onclick = async () => {
+                    await saveWebhookForm();
+                    const res = await ipcRenderer.invoke('webhook:test');
+                    if (res && res.ok) {
+                        showAppToast('测试成功：表格里应该多了一条测试记录');
+                    } else {
+                        const detail = (res && res.json && res.json.errmsg) || (res && res.body) || '未知错误';
+                        showAppToast('测试失败：' + String(detail).slice(0, 90));
+                    }
+                    const latest = await ipcRenderer.invoke('webhook:get');
+                    renderWebhookLog(latest.history);
+                };
+            }
+
+            // 主进程推送完成后刷新记录
+            ipcRenderer.on('webhook:log', () => {
+                ipcRenderer.invoke('webhook:get').then(res => renderWebhookLog(res.history));
+            });
+
+            // ============ 全局搜索（M14-5） ============
+            const searchInputEl = document.getElementById('searchInput');
+            const searchClearEl = document.getElementById('searchClearBtn');
+
+            function applySearch() {
+                render(true);
+                if (currentView === 'table') renderTable(true);
+                if (isArchiveExpanded) renderArchiveHistory();
+            }
+
+            if (searchInputEl) {
+                searchInputEl.addEventListener('input', () => {
+                    searchKeyword = searchInputEl.value.trim().toLowerCase();
+                    applySearch();
+                });
+            }
+            if (searchClearEl) {
+                searchClearEl.onclick = () => {
+                    if (searchInputEl) searchInputEl.value = '';
+                    searchKeyword = '';
+                    applySearch();
+                };
+            }
+        }
+
+        // 提醒时间：卡片上的 ⏰ 徽标点击后也可设置 / 清除
+        window.setReminder = (id) => {
+            const note = notes.find(x => x.id === id) || archivedNotes.find(x => x.id === id);
+            if (!note) return;
+            const current = note.remindAt ? formatDateInput(note.remindAt) : '';
+            const input = prompt('设置提醒时间（格式 2026-09-28 18:00，留空则清除提醒）', current);
+            if (input === null) return;
+            const text = String(input).trim();
+            if (!text) {
+                delete note.remindAt;
+                showAppToast('已清除提醒');
+            } else {
+                const ts = new Date(text.replace(' ', 'T')).getTime();
+                if (isNaN(ts)) {
+                    showAppToast('时间格式无法识别，示例：2026-09-28 18:00');
+                    return;
+                }
+                note.remindAt = ts;
+                showAppToast('已设置提醒：' + formatDate(ts));
+            }
+            if (archivedNotes.indexOf(note) !== -1) saveArchive();
+            else save();
         };

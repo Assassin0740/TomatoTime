@@ -1,17 +1,35 @@
 {
   "name": "timer-app",
-  "version": "1.0.5",
-  "description": "专注计时器应用",
-  "author": "User",
+  "version": "1.1.0",
+  "description": "专注计时器 · 悬浮窗 + 任务管理 + 本地 AI 接入 API + 表格 WebHook 同步",
+  "author": "廖中钰",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js",
     "build": "electron-builder"
   },
   "build": {
     "appId": "com.example.timer",
     "productName": "计时器",
     "icon": "图标/dstuy-bkp5e-001.ico",
+    "files": [
+      "package.json",
+      "main.js",
+      "api-server.js",
+      "webhook.js",
+      "store.js",
+      "preload.js",
+      "renderer.js",
+      "style.css",
+      "计时器.html",
+      "float.html",
+      "图标/**",
+      "Draws/**",
+      "表情包/**",
+      "仕事終わったよ.wav",
+      "休憩終わったよ.wav"
+    ],
     "win": {
       "target": "nsis",
       "icon": "图标/dstuy-bkp5e-001.ico"
@@ -20,6 +38,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
+    "extraResources": [
+      { "from": "timer-cli.js", "to": "timer-cli.js" },
+      { "from": "timer-cli.py", "to": "timer-cli.py" },
+      { "from": "timer.cmd", "to": "timer.cmd" }
+    ],
     "directories": {
       "output": "dist"
     }

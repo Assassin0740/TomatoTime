@@ -5,3 +5,8 @@ dist/
 
 # 本地工作记忆（非项目交付物）
 .workbuddy/
+
+# 临时 / 测试产物（下划线开头均为开发过程临时文件）
+_*
+cli_userdata/
+_testdata/

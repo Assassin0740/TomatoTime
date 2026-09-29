@@ -158,6 +158,122 @@
         </div>
 
         <div class="settings-section">
+            <h4>🤖 AI 接入 · 系统集成</h4>
+            <div class="settings-row">
+                <label>AI 接口（本地）</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="apiEnabled">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>端口</label>
+                <input type="number" id="apiPort" min="1024" max="65535" step="1"
+                       style="width: 96px; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 13px;">
+            </div>
+            <div class="settings-row">
+                <label>访问令牌</label>
+                <div style="display: flex; align-items: center; gap: 6px; flex: 1;">
+                    <input type="text" id="apiToken" readonly
+                           style="flex: 1; min-width: 0; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                    <button id="apiTokenRegen" title="重新生成令牌" style="padding: 5px 8px; background: rgba(255,255,255,0.08); border: 1px solid #555; color: #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;">↻</button>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>开机自启</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="autoLaunchToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>全局快捷键</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="globalShortcutToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>任务提醒</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="reminderToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div id="apiStatus" style="font-size: 12px; color: #888; line-height: 1.7; margin: 2px 0 6px; word-break: break-all;"></div>
+            <div style="font-size: 12px; color: #888; line-height: 1.7; margin: -2px 0 6px;">
+                快捷键：<b>Ctrl+Alt+Space</b> 开始/暂停 · <b>Ctrl+Alt+M</b> 切换模式 · <b>Ctrl+Alt+F</b> 悬浮窗 · <b>Ctrl+Alt+N</b> 快速记录
+            </div>
+            <button id="apiCopyExample" style="padding: 8px 12px; background: rgba(33, 150, 243, 0.18); border: 1px solid rgba(33, 150, 243, 0.45); color: #90caf9; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">复制调用示例（给 AI / 脚本）</button>
+        </div>
+
+        <div class="settings-section">
+            <h4>🔗 WebHook · 同步到表格</h4>
+            <div class="settings-row">
+                <label>启用同步</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="webhookEnabled">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>回调地址</label>
+                <input type="text" id="webhookUrl" placeholder="https://…/webhook?key=…"
+                       style="flex: 1; min-width: 0; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+            </div>
+            <div class="settings-row">
+                <label>推送时机</label>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvCreated"> 新增</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvCompleted"> 完成</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvUpdated"> 修改</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvArchived"> 归档</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvDeleted"> 删除</label>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>载荷格式</label>
+                <select id="webhookMode" style="padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                    <option value="wecom">企业微信智能表格（add_records）</option>
+                    <option value="records">通用 records 数组</option>
+                    <option value="flat">通用字段平铺</option>
+                    <option value="text">企业微信群机器人文本</option>
+                    <option value="custom">自定义 JSON 模板</option>
+                </select>
+            </div>
+
+            <!-- 智能表格：字段解析与映射 -->
+            <div id="webhookWecomBox" style="margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; line-height: 1.7; margin-bottom: 4px;">
+                    智能表格的 <code>values</code> 用的是<b>字段 ID</b>（形如 fABCD1），
+                    请到表格「自动化 → 接收外部数据」页面，把右侧的<b>示例 JSON 整段复制</b>粘到下面，点「解析字段」。
+                </div>
+                <textarea id="webhookSchemaJson" rows="4" placeholder='{"schema":[{"field_id":"fABCD1","field_name":"任务内容","field_type":"text"}]}'
+                          style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin: 6px 0;">
+                    <button id="webhookParseBtn" style="flex: 1; padding: 7px 12px; background: rgba(255, 183, 77, 0.16); border: 1px solid rgba(255, 183, 77, 0.45); color: #ffcc80; border-radius: 6px; cursor: pointer; font-size: 13px;">解析字段</button>
+                </div>
+                <div id="webhookFieldRows" style="display: flex; flex-direction: column; gap: 6px;"></div>
+            </div>
+
+            <div id="webhookTemplateRow" style="display: none; margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; margin-bottom: 4px;">自定义 JSON 模板，可用 {{任务内容}} {{优先级}} {{状态}} {{创建时间}} {{records}} {{json}} 等占位符</div>
+                <textarea id="webhookTemplate" rows="4" placeholder='{"action":"{{action}}","任务内容":"{{任务内容}}","优先级":"{{优先级}}"}' style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+            </div>
+
+            <div id="webhookGenericBox" style="display: none; margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; margin-bottom: 4px;">列名映射（左边是推送出去的列名，右边是数据来源字段）</div>
+                <textarea id="webhookFields" rows="6" style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+            </div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <button id="webhookSaveBtn" style="flex: 1; padding: 8px 12px; background: rgba(76, 175, 80, 0.18); border: 1px solid rgba(76, 175, 80, 0.45); color: #a5d6a7; border-radius: 6px; cursor: pointer; font-size: 13px;">保存</button>
+                <button id="webhookTestBtn" style="flex: 1; padding: 8px 12px; background: rgba(33, 150, 243, 0.18); border: 1px solid rgba(33, 150, 243, 0.45); color: #90caf9; border-radius: 6px; cursor: pointer; font-size: 13px;">发送测试</button>
+            </div>
+            <div id="webhookLog" style="font-size: 12px; color: #888; line-height: 1.6; max-height: 150px; overflow-y: auto; word-break: break-all;"></div>
+        </div>
+
+        <div class="settings-section">
             <div class="collapsible-header" onclick="toggleCollapsible('bgSelector')">
                 <h4 style="display: inline;">选择背景</h4>
                 <span id="bgSelectorArrow">▼</span>
@@ -215,6 +331,15 @@
                     <span class="tool-panel-arrow" id="toolPanelArrow">▼</span>
                 </div>
                 <div id="toolPanelContainer" class="tool-panel-body">
+                    <div class="tool-group">
+                        <span class="tool-group-label">搜索</span>
+                        <div class="tool-btn-row">
+                            <input type="text" id="searchInput" placeholder="搜索任务内容…"
+                                   style="flex: 1; min-width: 160px; padding: 5px 10px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 13px;">
+                            <button id="searchClearBtn" style="padding: 5px 10px; background: rgba(255,255,255,0.08); border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px;">清除</button>
+                        </div>
+                    </div>
+
                     <div class="tool-group">
                         <span class="tool-group-label">排序</span>
                         <div class="sort-buttons">
@@ -302,6 +427,10 @@
             <!-- 右键菜单 -->
             <div class="context-menu" id="contextMenu">
                 <div class="context-menu-item" id="pasteImageItem">粘贴图片</div>
+                <div class="context-menu-item" id="copyImageItem" style="display: none;">复制图片</div>
+                <div class="context-menu-item" id="copyImageFileItem" style="display: none;">复制为文件（微信兼容）</div>
+                <div class="context-menu-item" id="remindTaskItem" style="display: none;">设置提醒…</div>
+                <div class="context-menu-item" id="pushWebhookItem" style="display: none;">推送到表格</div>
             </div>
             
             <div id="tableView" class="table-view-container">

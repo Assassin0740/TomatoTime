@@ -1,7 +1,12 @@
-const { app, BrowserWindow, Menu, ipcMain, Tray, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, Tray, dialog,
+    globalShortcut, clipboard, nativeImage, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const nodeUrl = require('url');
 const store = require('./store');
+const { createApiServer } = require('./api-server');
+const { createWebhook, DEFAULT_WEBHOOK_CONFIG } = require('./webhook');
 
 // 单实例锁定
 const gotTheLock = app.requestSingleInstanceLock();
@@ -35,6 +40,59 @@ let trayCreated = false;
 const configPath = path.join(app.getPath('userData'), 'floatWindowConfig.json');
 const customDrawsPath = path.join(app.getPath('userData'), 'CustomDraws');
 const noteImagesPath = path.join(app.getPath('userData'), 'NoteImages');
+const mainSettingsPath = path.join(app.getPath('userData'), 'main-settings.json');
+
+/**
+ * main-settings.json —— 只由主进程持有的设置（不进 localStorage）
+ *  · api            本地 AI 接入 API 的开关 / 端口 / 令牌
+ *  · autolaunch     开机自启
+ *  · globalShortcuts 全局快捷键
+ * 放在主进程是因为这几项要「在窗口创建之前 / 没有窗口时」也能生效。
+ */
+const MAIN_SETTINGS_DEFAULT = {
+    api: { enabled: false, port: 17890, token: '', requireToken: true, allowLAN: false },
+    autolaunch: false,
+    globalShortcuts: true,
+    reminders: true,
+    // WebHook：把任务变化同步到外部表格（企业微信智能表格等）
+    webhook: Object.assign({}, DEFAULT_WEBHOOK_CONFIG, {
+        enabled: true,
+        url: 'https://qyapi.weixin.qq.com/cgi-bin/wedoc/smartsheet/webhook?key=4VIdhSHbIyuo2Ijq5f9otWJGWtwNG0ZvuAJz5trk8IZo2PSKTKOt5FfTyycG71SKOV4kpyd53hHohBVC1lWDVLUuyTbqy0uIApmfjr4RGSKu',
+        events: { created: true, completed: true, updated: false, deleted: false, archived: false }
+    })
+};
+
+let mainSettings = JSON.parse(JSON.stringify(MAIN_SETTINGS_DEFAULT));
+
+function loadMainSettings() {
+    try {
+        if (fs.existsSync(mainSettingsPath)) {
+            const parsed = JSON.parse(fs.readFileSync(mainSettingsPath, 'utf8'));
+            mainSettings = Object.assign({}, MAIN_SETTINGS_DEFAULT, parsed);
+            mainSettings.api = Object.assign({}, MAIN_SETTINGS_DEFAULT.api, parsed.api || {});
+            mainSettings.webhook = Object.assign({}, MAIN_SETTINGS_DEFAULT.webhook, parsed.webhook || {});
+            mainSettings.webhook.events = Object.assign({}, MAIN_SETTINGS_DEFAULT.webhook.events, (parsed.webhook || {}).events || {});
+            mainSettings.webhook.fields = Object.assign({}, MAIN_SETTINGS_DEFAULT.webhook.fields, (parsed.webhook || {}).fields || {});
+        }
+    } catch (e) {
+        console.error('[settings] 主设置读取失败，使用默认值：', e.message);
+    }
+    if (!mainSettings.api.token) {
+        mainSettings.api.token = crypto.randomBytes(12).toString('hex');
+        saveMainSettings();
+    }
+    return mainSettings;
+}
+
+function saveMainSettings() {
+    try {
+        const tmp = mainSettingsPath + '.tmp';
+        fs.writeFileSync(tmp, JSON.stringify(mainSettings, null, 2), 'utf8');
+        fs.renameSync(tmp, mainSettingsPath);
+    } catch (e) {
+        console.error('[settings] 主设置保存失败：', e.message);
+    }
+}
 
 // 读取悬浮窗配置
 function loadFloatWindowConfig() {
@@ -222,6 +280,31 @@ function setTimerTime(minutes, seconds) {
     }
     currentTime = minutes * 60 + seconds;
     broadcastTimerStatus();
+}
+
+// 手动切换工作 / 休息模式
+function switchMode() {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        isTimerRunning = false;
+    }
+    isWorking = !isWorking;
+    currentTime = isWorking ? WORK_TIME : REST_TIME;
+    broadcastTimerStatus();
+    updateTrayMenu();
+}
+
+// 停止并重置为本阶段起始时长
+function resetTimer() {
+    if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        isTimerRunning = false;
+    }
+    currentTime = isWorking ? WORK_TIME : REST_TIME;
+    broadcastTimerStatus();
+    updateTrayMenu();
 }
 
 // 切换悬浮窗函数
@@ -557,7 +640,9 @@ function toggleFloatWindow() {
         updateTrayMenu();
     });
 
-    mainWindow.webContents.send('float-window-opened');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('float-window-opened');
+    }
     updateTrayMenu();
 }
 
@@ -873,14 +958,7 @@ function createWindow() {
     ipcMain.handle('store:stats', () => store.stats());
 
     ipcMain.on('toggle-mode', () => {
-        if (timerInterval) {
-            clearInterval(timerInterval);
-            timerInterval = null;
-        }
-        isWorking = !isWorking;
-        currentTime = isWorking ? WORK_TIME : REST_TIME;
-        broadcastTimerStatus();
-        updateTrayMenu();
+        switchMode();
     });
 
     ipcMain.on('toggle-timer', () => {
@@ -925,9 +1003,21 @@ app.whenReady().then(() => {
         console.error('[store] 初始化失败，将退回纯 localStorage 模式：', e);
     }
 
+    // 主设置（API / 开机自启 / 快捷键）要在窗口之前就绪：API 可能一开机就要工作
+    loadMainSettings();
+
     createWindow();
     // 只在应用启动时创建一次托盘
     createTray();
+
+    // 应用级能力：AI 接入 API、开机自启、全局快捷键、任务提醒
+    try {
+        applyMainSettings();
+        startReminderLoop();
+        startWebhookLoop();
+    } catch (e) {
+        console.error('[boot] 应用级能力初始化失败：', e);
+    }
     
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -951,6 +1041,18 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
     appIsQuitting = true;
     trayCreated = false; // 重置托盘标志
+
+    // 注销全局快捷键、关闭 API 服务、停止提醒轮询，避免留下占用端口 / 热键的僵尸
+    try {
+        globalShortcut.unregisterAll();
+    } catch (e) { /* ignore */ }
+    try {
+        api.stop();
+    } catch (e) { /* ignore */ }
+    if (reminderTimer) {
+        clearInterval(reminderTimer);
+        reminderTimer = null;
+    }
 
     // 把最后一批写入落盘（平时是 180ms 合并写入，退出前必须强制刷一次）
     try {
@@ -1035,6 +1137,17 @@ function updateTrayMenu() {
                 } else {
                     toggleFloatWindow();
                 }
+            }
+        },
+        {
+            label: mainSettings.api && mainSettings.api.enabled
+                ? '🤖 AI 接口：已开启（' + mainSettings.api.port + '）'
+                : '🤖 AI 接口：已关闭',
+            click: () => {
+                mainSettings.api.enabled = !mainSettings.api.enabled;
+                saveMainSettings();
+                applyMainSettings();
+                updateTrayMenu();
             }
         },
         { type: 'separator' },
@@ -1265,47 +1378,132 @@ ipcMain.on('delete-background-image', (event, fileName) => {
     }
 });
 
+// ============ 图片统一处理（渲染进程粘贴 / API 注入 / 剪贴板共用） ============
+
+/**
+ * 把图片二进制写入 <userData>/NoteImages，返回 file:// URL。
+ * 用 SHA-256 做指纹去重：同一张图无论从哪条路径进来都只存一份（类似 Telegram）。
+ */
+function saveImageBuffer(buffer, ext) {
+    if (!fs.existsSync(noteImagesPath)) {
+        fs.mkdirSync(noteImagesPath, { recursive: true });
+    }
+    if (!ext || !/^[a-z0-9]{2,5}$/i.test(ext)) ext = 'png';
+    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const fileName = 'img_' + hash + '.' + ext.toLowerCase();
+    const filePath = path.join(noteImagesPath, fileName);
+    if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, buffer);
+    }
+    // 自动转换为标准的 file URL（处理了盘符、中文字符与空格的 URL 编码）
+    return nodeUrl.pathToFileURL(filePath).href;
+}
+
+/** 把 base64 / dataURL 转成 file:// URL */
+function saveImageFromBase64(base64Data) {
+    let ext = 'png';
+    let data = String(base64Data);
+    const matches = data.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (matches) {
+        ext = matches[1];
+        data = matches[2];
+    } else {
+        data = data.replace(/^data:image\/\w+;base64,/, '');
+    }
+    const buffer = Buffer.from(data, 'base64');
+    if (!buffer.length) throw new Error('图片数据为空');
+    return saveImageBuffer(buffer, ext);
+}
+
+/** 从网络下载图片（AI 注入的远程图片走这里） */
+async function downloadImage(url) {
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) throw new Error('下载图片失败：HTTP ' + res.status);
+    const type = (res.headers.get('content-type') || '').toLowerCase();
+    let ext = 'png';
+    if (type.indexOf('jpeg') !== -1) ext = 'jpg';
+    else if (type.indexOf('gif') !== -1) ext = 'gif';
+    else if (type.indexOf('webp') !== -1) ext = 'webp';
+    else if (type.indexOf('bmp') !== -1) ext = 'bmp';
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) throw new Error('下载到的图片为空');
+    return saveImageBuffer(buffer, ext);
+}
+
+/** 从本地文件读取并收纳进图片库（API 传入路径 / 粘贴自其它软件时用） */
+function saveImageFromPath(filePath) {
+    let p = String(filePath);
+    if (p.indexOf('file://') === 0) p = nodeUrl.fileURLToPath(p);
+    const buffer = fs.readFileSync(p);
+    return saveImageBuffer(buffer, path.extname(p).replace('.', '').toLowerCase());
+}
+
+/**
+ * 统一的图片入口：
+ *   { data: 'dataURL 或 base64' } / { url: 'https://...' } / { path: 'C:\\...' } / '字符串'
+ * 返回 file:// URL，失败抛错由调用方决定如何处理。
+ */
+async function saveImageFromInput(input) {
+    let spec = input;
+    if (typeof spec === 'string') spec = { data: spec };
+    if (!spec || typeof spec !== 'object') throw new Error('图片格式不正确');
+    if (spec.data) return saveImageFromBase64(spec.data);
+    if (spec.url) return await downloadImage(String(spec.url));
+    if (spec.path) return saveImageFromPath(String(spec.path));
+    throw new Error('图片缺少 data / url / path 字段');
+}
+
+/** 读取已入库图片的二进制（供写剪贴板用）：支持 file:// URL 与普通路径 */
+async function readImageFile(fileUrl) {
+    const p = String(fileUrl).startsWith('file://') ? nodeUrl.fileURLToPath(fileUrl) : fileUrl;
+    return fs.readFileSync(p);
+}
+
+/**
+ * 把一段 HTML 里的远程图片与 base64 图片全部本地化。
+ * 目的：AI 注入 / 从别处粘来的内容不会因为链接失效而变成裂图。
+ */
+async function localizeHtmlImages(html) {
+    if (!html || html.indexOf('<img') === -1) return html;
+    const imgRegex = /<img\b[^>]*?src\s*=\s*["']([^"']+)["'][^>]*>/gi;
+    const jobs = [];
+    let m;
+    while ((m = imgRegex.exec(html)) !== null) {
+        const src = m[1];
+        if (/^https?:\/\//i.test(src)) jobs.push({ src, input: { url: src } });
+        else if (src.indexOf('data:image') === 0) jobs.push({ src, input: { data: src } });
+    }
+    if (jobs.length === 0) return html;
+    let out = html;
+    for (const job of jobs) {
+        try {
+            const fileUrl = await saveImageFromInput(job.input);
+            // 只替换这一处 src，避免误伤同名的其它属性
+            out = out.split('"' + job.src + '"').join('"' + fileUrl + '"')
+                     .split("'" + job.src + "'").join("'" + fileUrl + "'");
+        } catch (e) {
+            console.warn('[image] 本地化失败，保留原地址：', job.src, e.message);
+        }
+    }
+    return out;
+}
+
 // 保存卡片/笔记中的图片到本地，避免使用 Base64，并通过 SHA-256 哈希去重（类似 Telegram）
 ipcMain.handle('save-note-image', async (event, base64Data) => {
     try {
-        const url = require('url');
-        const crypto = require('crypto');
-        if (!fs.existsSync(noteImagesPath)) {
-            fs.mkdirSync(noteImagesPath, { recursive: true });
-        }
-        
-        let ext = 'png';
-        let data = base64Data;
-        
-        const matches = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
-        if (matches) {
-            ext = matches[1];
-            data = matches[2];
-        } else {
-            const base64Clean = base64Data.replace(/^data:image\/\w+;base64,/, '');
-            data = base64Clean;
-        }
-        const buffer = Buffer.from(data, 'base64');
-        
-        // 1. 计算图片 buffer 的 SHA-256 哈希值作为文件唯一指纹
-        const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-        
-        // 2. 用哈希指纹和扩展名组合成固定文件名
-        const fileName = `img_${hash}.${ext}`;
-        const filePath = path.join(noteImagesPath, fileName);
-        
-        // 3. 检查文件是否已存在。如果存在则跳过写入直接复用，实现完美去重
-        if (fs.existsSync(filePath)) {
-            console.log('检测到相同图片，跳过存盘直接复用索引:', filePath);
-        } else {
-            fs.writeFileSync(filePath, buffer);
-            console.log('新图片已保存到本地:', filePath);
-        }
-        
-        // 自动转换为标准的 file URL（处理了盘符、中文字符与空格的 URL 编码）
-        return url.pathToFileURL(filePath).href;
+        return saveImageFromBase64(base64Data);
     } catch (e) {
         console.error('保存笔记图片失败:', e);
+        throw e;
+    }
+});
+
+// 从「网络地址 / 本地路径」收纳图片：粘贴外部图片、AI 注入远程图片都走这里
+ipcMain.handle('save-note-image-source', async (event, input) => {
+    try {
+        return await saveImageFromInput(input);
+    } catch (e) {
+        console.error('保存外部图片失败:', e);
         throw e;
     }
 });
@@ -1344,6 +1542,444 @@ ipcMain.handle('cleanup-unused-images', async (event, usedFileNames) => {
         return { success: false, error: e.message };
     }
 });
+
+// ============ 剪贴板桥接：让应用与微信可以互相粘贴图片 ============
+
+/**
+ * 读取剪贴板里的图片。
+ * 微信 / 截图工具复制的图片通常只以位图（CF_DIB / CF_BITMAP）形式存在，
+ * 网页的 paste 事件里既没有 files 也没有 items，所以必须由主进程直接从系统剪贴板读。
+ */
+ipcMain.handle('clipboard:read-image', async () => {
+    try {
+        const formats = clipboard.availableFormats().slice(0, 12);
+        const img = clipboard.readImage();
+        if (!img || img.isEmpty()) return { ok: false, formats: formats };
+        return { ok: true, dataUrl: img.toDataURL(), size: img.getSize(), formats: formats };
+    } catch (e) {
+        console.error('[clipboard] 读取图片失败：', e);
+        return { ok: false, error: e.message };
+    }
+});
+
+/**
+ * 把图片写进系统剪贴板，使其可以粘贴到微信等外部软件。
+ *  mode='bitmap'：写位图（Chromium 会同时提供 DIB 与 PNG，绝大多数程序可用）
+ *  mode='file'  ：写文件拖放列表（CF_HDROP）——粘贴图片文件，微信一定认
+ */
+ipcMain.handle('clipboard:write-image', async (event, src, mode) => {
+    try {
+        let buffer = null;
+        if (typeof src === 'string' && src.indexOf('data:image') === 0) {
+            buffer = Buffer.from(src.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+        } else {
+            let fileUrl = src;
+            if (typeof src === 'string' && /^https?:/i.test(src)) fileUrl = await saveImageFromInput({ url: src });
+            buffer = await readImageFile(fileUrl);
+        }
+        const image = nativeImage.createFromBuffer(buffer);
+        if (image.isEmpty()) return { ok: false, error: '图片解析失败' };
+
+        if (mode === 'file') {
+            const ok = await copyImageAsFile(image, buffer);
+            if (ok) return { ok: true, mode: 'file', size: image.getSize() };
+            // 文件方式失败时退回位图，保证「复制」这个动作一定成功
+            clipboard.writeImage(image);
+            return { ok: true, mode: 'bitmap(fallback)', size: image.getSize() };
+        }
+
+        clipboard.writeImage(image);
+        return { ok: true, mode: 'bitmap', size: image.getSize() };
+    } catch (e) {
+        console.error('[clipboard] 写入图片失败：', e);
+        return { ok: false, error: e.message };
+    }
+});
+
+/** 把图片导出成临时 PNG 文件并用文件拖放列表占位剪贴板（微信粘贴的稳妥路径） */
+function copyImageAsFile(image, buffer) {
+    return new Promise(resolve => {
+        try {
+            const dir = path.join(app.getPath('userData'), 'ClipboardExport');
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const filePath = path.join(dir, 'clipboard-image.png');
+            fs.writeFileSync(filePath, buffer || image.toPNG());
+            if (process.platform !== 'win32') {
+                // 非 Windows 没有 PowerShell，直接放弃这条路
+                return resolve(false);
+            }
+            const { execFile } = require('child_process');
+            const ps = [
+                '-NoProfile', '-NonInteractive', '-STA', '-Command',
+                'Add-Type -AssemblyName System.Windows.Forms;' +
+                '$c = New-Object System.Collections.Specialized.StringCollection;' +
+                '$c.Add(' + JSON.stringify(filePath).replace(/"/g, "'") + ');' +
+                '[System.Windows.Forms.Clipboard]::SetFileDropList($c)'
+            ];
+            execFile('powershell.exe', ps, { timeout: 8000, windowsHide: true }, err => {
+                if (err) {
+                    console.warn('[clipboard] 文件方式写入失败：', err.message);
+                    return resolve(false);
+                }
+                resolve(true);
+            });
+        } catch (e) {
+            console.warn('[clipboard] 文件方式写入异常：', e.message);
+            resolve(false);
+        }
+    });
+}
+
+// ============ 主进程 ⇄ 渲染进程的请求应答（供 API 调用任务能力） ============
+
+const pendingApiRequests = new Map();
+let apiRequestSeq = 0;
+
+/**
+ * API 收到的任务操作最终都交给渲染进程执行 —— 任务是渲染进程的内存对象，
+ * 只有它才能走完整的「保存 + 重渲染 + 同步悬浮窗 + 图片回收」链路。
+ */
+function invokeRenderer(op, payload) {
+    return new Promise((resolve, reject) => {
+        if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+            return reject(new Error('主窗口未就绪，请先把主窗口显示出来'));
+        }
+        const reqId = ++apiRequestSeq;
+        const timer = setTimeout(() => {
+            pendingApiRequests.delete(reqId);
+            reject(new Error('渲染进程响应超时（10s）'));
+        }, 10000);
+        pendingApiRequests.set(reqId, { resolve: resolve, reject: reject, timer: timer });
+        mainWindow.webContents.send('api:task-request', { reqId: reqId, op: op, payload: payload || {} });
+    });
+}
+
+ipcMain.on('api:task-reply', (event, msg) => {
+    if (!msg || msg.reqId === undefined) return;
+    const entry = pendingApiRequests.get(msg.reqId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    pendingApiRequests.delete(msg.reqId);
+    if (msg.ok) entry.resolve(msg.data);
+    else entry.reject(new Error(msg.error || '渲染进程处理失败'));
+});
+
+// ============ 本地 AI 接入 API ============
+
+const api = createApiServer({
+    version: () => app.getVersion(),
+    invokeRenderer: invokeRenderer,
+    timer: {
+        status: () => getTimerStatus(),
+        start: () => { if (!timerInterval) toggleTimer(); },
+        pause: () => { if (timerInterval) toggleTimer(); },
+        toggle: () => toggleTimer(),
+        reset: () => resetTimer(),
+        switchMode: () => switchMode(),
+        setTime: (m, s) => setTimerTime(m, s)
+    },
+    saveImage: input => saveImageFromInput(input),
+    readImageFile: fileUrl => readImageFile(fileUrl),
+    localizeHtml: html => localizeHtmlImages(html),
+    getSetting: key => store.getItem(key),
+    setSetting: (key, value) => {
+        store.setItem(key, String(value));
+        // 让界面立刻跟上（渲染进程按 key 决定怎么应用）
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('api:apply-setting', { key: key, value: String(value) });
+        }
+    },
+    getAllSettings: () => store.getAll(),
+    notify: (title, body) => {
+        try {
+            new Notification({ title: title, body: body }).show();
+        } catch (e) {
+            console.error('[notify] 通知失败：', e.message);
+        }
+    },
+    showWindow: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    },
+    hideWindow: () => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide();
+    },
+    toggleFloat: () => toggleFloatWindow(),
+    isFloatOpen: () => !!(floatWindow && !floatWindow.isDestroyed()),
+    webhook: {
+        info: () => ({
+            enabled: !!mainSettings.webhook.enabled,
+            url: maskWebhookUrl(mainSettings.webhook.url),
+            mode: mainSettings.webhook.mode,
+            events: mainSettings.webhook.events,
+            fields: mainSettings.webhook.schemaFields,
+            recordCount: Object.keys(mainSettings.webhook.recordIds || {}).length,
+            history: webhook.history()
+        }),
+        push: (action, tasks) => webhook.push(action, tasks)
+    }
+});
+
+// ============ WebHook：把任务变化同步到外部表格 ============
+
+/** 展示时隐藏 webhook 的 key，避免整串密钥被截图外传 */
+function maskWebhookUrl(url) {
+    const s = String(url || '');
+    const i = s.indexOf('key=');
+    if (i === -1) return s;
+    const key = s.slice(i + 4);
+    return s.slice(0, i + 4) + (key.length > 8 ? key.slice(0, 8) + '…（共 ' + key.length + ' 位）' : key);
+}
+
+const webhook = createWebhook({
+    getConfig: () => mainSettings.webhook,
+    saveConfig: next => {
+        mainSettings.webhook = next;
+        saveMainSettings();
+    },
+    notify: entry => {
+        // 把发送结果广播给界面，方便在设置面板看到最近几次推送
+        const payload = { entry: entry };
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('webhook:log', payload);
+    },
+    // 图片列要传纯 base64；超过 2MB 的直接放弃（企业微信会拒绝）
+    loadImage: fileUrl => {
+        try {
+            const p = String(fileUrl).indexOf('file://') === 0 ? nodeUrl.fileURLToPath(fileUrl) : String(fileUrl);
+            const buffer = fs.readFileSync(p);
+            if (buffer.length > 2 * 1024 * 1024) {
+                console.warn('[webhook] 图片超过 2MB，跳过：', p);
+                return null;
+            }
+            return buffer.toString('base64');
+        } catch (e) {
+            console.warn('[webhook] 图片读取失败：', e.message);
+            return null;
+        }
+    }
+});
+
+function webhookSnapshot() {
+    const cfg = JSON.parse(JSON.stringify(mainSettings.webhook));
+    return {
+        config: cfg,
+        events: webhook.EVENT_LABELS,
+        sources: webhook.SOURCES,
+        history: webhook.history()
+    };
+}
+
+ipcMain.handle('webhook:get', () => webhookSnapshot());
+
+ipcMain.handle('webhook:set', (event, patch) => {
+    webhook.updateConfig(patch || {});
+    return webhookSnapshot();
+});
+
+ipcMain.handle('webhook:test', () => webhook.test());
+
+// 主动推送：右键「推送到表格」或 API 调用
+ipcMain.handle('webhook:push', (event, payload) => {
+    const action = (payload && payload.action) || 'created';
+    const tasks = (payload && payload.tasks) || [];
+    return webhook.push(action, tasks).then(() => ({ ok: true }));
+});
+
+/** 差分轮询：和上一轮快照比对，变了才推。覆盖手动编辑、AI 注入等所有改动路径 */
+function startWebhookLoop() {
+    const tick = () => {
+        try {
+            const active = JSON.parse(store.getItem('notes') || '[]');
+            const archived = JSON.parse(store.getItem('archived_notes') || '[]');
+            webhook.diffAndEmit(active, archived);
+        } catch (e) {
+            console.warn('[webhook] 差分失败：', e.message);
+        }
+    };
+    setTimeout(tick, 6000);          // 启动 6s 后建立首份快照（不推送历史数据）
+    setInterval(tick, 6000);
+}
+
+/** 把 main-settings.json 的内容落到各个子系统上 */
+function applyMainSettings() {
+    api.applyConfig(Object.assign({ enabled: mainSettings.api.enabled }, mainSettings.api));
+    applyAutoLaunch(mainSettings.autolaunch);
+    applyGlobalShortcuts(mainSettings.globalShortcuts);
+}
+
+ipcMain.handle('main-settings:get', () => ({
+    settings: JSON.parse(JSON.stringify(mainSettings)),
+    api: api.info(),
+    webhook: { config: JSON.parse(JSON.stringify(mainSettings.webhook)), events: webhook.EVENT_LABELS },
+    loginItem: safeGetLoginItemSettings()
+}));
+
+ipcMain.handle('main-settings:set', (event, patch) => {
+    if (patch && typeof patch === 'object') {
+        if (patch.api && typeof patch.api === 'object') {
+            mainSettings.api = Object.assign({}, mainSettings.api, patch.api);
+        }
+        if (typeof patch.autolaunch === 'boolean') mainSettings.autolaunch = patch.autolaunch;
+        if (typeof patch.globalShortcuts === 'boolean') mainSettings.globalShortcuts = patch.globalShortcuts;
+        if (typeof patch.reminders === 'boolean') mainSettings.reminders = patch.reminders;
+        saveMainSettings();
+        applyMainSettings();
+    }
+    return {
+        settings: JSON.parse(JSON.stringify(mainSettings)),
+        api: api.info(),
+        webhook: { config: JSON.parse(JSON.stringify(mainSettings.webhook)), events: webhook.EVENT_LABELS },
+        loginItem: safeGetLoginItemSettings()
+    };
+});
+
+ipcMain.handle('api:regenerate-token', () => {
+    mainSettings.api.token = crypto.randomBytes(12).toString('hex');
+    saveMainSettings();
+    return api.applyConfig(Object.assign({ enabled: mainSettings.api.enabled }, mainSettings.api));
+});
+
+ipcMain.handle('api:info', () => api.info());
+
+/** 复制一段可直接使用的调用示例（给 AI / 脚本用） */
+ipcMain.handle('api:example', () => {
+    const info = api.info();
+    const h = [];
+    if (info.tokenRequired) h.push('-H "X-Api-Token: ' + info.token + '"');
+    return [
+        '# 1) 健康检查',
+        'curl http://127.0.0.1:' + info.port + '/api/health ' + h.join(' '),
+        '',
+        '# 2) 注入一条任务（带图片）',
+        'curl -X POST http://127.0.0.1:' + info.port + '/api/tasks ' + h.join(' ') + ' -H "Content-Type: application/json" -d "{\\"content\\":\\"写周报\\",\\"priority\\":\\"high\\",\\"images\\":[{\\"url\\":\\"https://example.com/a.png\\"}]}"',
+        '',
+        '# 3) 查看全部任务',
+        'curl "http://127.0.0.1:' + info.port + '/api/tasks?scope=active" ' + h.join(' '),
+        '',
+        '# 接口自描述：GET http://127.0.0.1:' + info.port + '/api/schema'
+    ].join('\n');
+});
+
+// ============ 开机自启 ============
+
+function safeGetLoginItemSettings() {
+    try {
+        return app.getLoginItemSettings();
+    } catch (e) {
+        return { openAtLogin: false };
+    }
+}
+
+function applyAutoLaunch(enabled) {
+    try {
+        app.setLoginItemSettings({
+            openAtLogin: !!enabled,
+            args: ['--autostart']
+        });
+    } catch (e) {
+        console.error('[autolaunch] 设置开机自启失败：', e.message);
+    }
+}
+
+// ============ 全局快捷键 ============
+
+const GLOBAL_SHORTCUTS = [
+    { accelerator: 'Ctrl+Alt+Space', action: 'toggle-timer', desc: '开始 / 暂停' },
+    { accelerator: 'Ctrl+Alt+M', action: 'switch-mode', desc: '切换工作 / 休息' },
+    { accelerator: 'Ctrl+Alt+F', action: 'toggle-float', desc: '开关悬浮窗' },
+    { accelerator: 'Ctrl+Alt+N', action: 'quick-add', desc: '唤起窗口并聚焦任务输入框' }
+];
+
+function applyGlobalShortcuts(enabled) {
+    try {
+        globalShortcut.unregisterAll();
+    } catch (e) { /* ignore */ }
+    if (!enabled) {
+        console.log('[shortcut] 全局快捷键已关闭');
+        return;
+    }
+    for (const s of GLOBAL_SHORTCUTS) {
+        try {
+            const ok = globalShortcut.register(s.accelerator, () => runShortcutAction(s.action));
+            if (!ok) console.warn('[shortcut] 注册失败（可能已被其它软件占用）：' + s.accelerator);
+        } catch (e) {
+            console.warn('[shortcut] 注册异常：' + s.accelerator, e.message);
+        }
+    }
+    console.log('[shortcut] 已注册 ' + GLOBAL_SHORTCUTS.length + ' 个全局快捷键');
+}
+
+function runShortcutAction(action) {
+    switch (action) {
+        case 'toggle-timer':
+            toggleTimer();
+            break;
+        case 'switch-mode':
+            switchMode();
+            break;
+        case 'toggle-float':
+            toggleFloatWindow();
+            break;
+        case 'quick-add':
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.show();
+                mainWindow.focus();
+                mainWindow.webContents.send('global-shortcut', { action: 'quick-add' });
+            }
+            break;
+    }
+}
+
+ipcMain.handle('shortcuts:list', () => GLOBAL_SHORTCUTS);
+
+// ============ 任务提醒（M14-3） ============
+
+const remindedKeys = new Set();
+let reminderTimer = null;
+
+function startReminderLoop() {
+    if (reminderTimer) return;
+    setTimeout(checkReminders, 8000);
+    reminderTimer = setInterval(checkReminders, 30000);
+}
+
+/** 直接从主进程副本里读任务，避免为了查提醒频繁打扰渲染进程 */
+function checkReminders() {
+    if (!mainSettings.reminders) return;
+    const raw = store.getItem('notes');
+    if (!raw) return;
+    let notes = [];
+    try {
+        notes = JSON.parse(raw);
+    } catch (e) {
+        return;
+    }
+    if (!Array.isArray(notes)) return;
+
+    const now = Date.now();
+    for (const n of notes) {
+        const at = n && (n.remindAt || n.remind_at);
+        if (!at || typeof at !== 'number') continue;
+        if (at > now) continue;
+        // 过期超过 24 小时的不再打扰（多半是电脑没开）
+        if (now - at > 24 * 3600 * 1000) continue;
+        const key = n.id + ':' + at;
+        if (remindedKeys.has(key)) continue;
+        remindedKeys.add(key);
+
+        const text = String(n.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+        try {
+            new Notification({ title: '⏰ 任务提醒', body: text || '（无内容）' }).show();
+        } catch (e) {
+            console.warn('[reminder] 通知失败：', e.message);
+        }
+        const payload = { id: n.id, text: text };
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('task-reminder', payload);
+        if (floatWindow && !floatWindow.isDestroyed()) floatWindow.webContents.send('task-reminder', payload);
+    }
+}
 
 module.exports = {
     getMainWindow: () => mainWindow
