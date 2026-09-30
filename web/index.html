@@ -2,307 +2,590 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#0d1117">
-    <meta name="description" content="专注计时器（网页版）：番茄钟 + 任务管理，数据保存在你自己的电脑里">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>专注计时器 · 网页版</title>
-    <!-- 图标：不声明的话浏览器会去要 /favicon.ico 并报 404 -->
+        <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="overrides.css">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="icon.svg">
     <link rel="manifest" href="manifest.webmanifest">
-    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ==================== 顶部栏 ==================== -->
-<header class="topbar">
-    <div class="topbar-inner">
-        <div class="brand">
-            <span class="brand-dot"></span>
-            <span>专注计时器</span>
-            <span class="brand-sub">网页版</span>
-        </div>
-        <div class="topbar-actions">
-            <button id="viewCardBtn" class="chip active" type="button">卡片</button>
-            <button id="viewTableBtn" class="chip" type="button">表格</button>
-            <button id="settingsBtn" class="chip chip-icon" type="button" title="设置">⚙</button>
-        </div>
+    <div class="bg-container" id="bgContainer">
+        <div class="bg-overlay" id="bgOverlay"></div>
     </div>
-</header>
 
-<main class="container">
+    <button class="settings-btn" id="settingsBtn">⚙</button>
 
-    <!-- ==================== 计时器 ==================== -->
-    <section class="panel timer-panel">
-        <div class="timer-mode" id="modeText">工作时间</div>
-        <div class="timer-time" id="timeText">25:00</div>
-        <div class="timer-btns">
-            <button id="startBtn" class="btn btn-primary" type="button">开始</button>
-            <button id="resetBtn" class="btn" type="button">重置</button>
-            <button id="switchBtn" class="btn" type="button">切换模式</button>
-        </div>
-        <div class="timer-hint" id="timerHint">
-            时间到会弹系统通知；数据只保存在本机浏览器里
-        </div>
-    </section>
+    <div class="settings-panel" id="settingsPanel">
 
-    <!-- ==================== 新增任务 ==================== -->
-    <section class="panel">
-        <div class="row-between">
-            <h3 class="panel-title">添加任务</h3>
-            <label class="mini-toggle" title="长期任务会单独归到「长期」分类">
-                <input type="checkbox" id="newTaskLong"> 长期
-            </label>
+        <!-- 【2026-09-30】设置分栏：一页一个分类（原来是一长条竖排，找东西要滚很久） -->
+        <div class="settings-tabs" id="settingsTabs" role="tablist">
+            <button class="settings-tab active" data-tab="appearance">外观显示</button>
+            <button class="settings-tab" data-tab="timer">计时与提醒</button>
+            <button class="settings-tab" data-tab="float">悬浮窗</button>
+            <button class="settings-tab" data-tab="ai">AI 接入</button>
+            <button class="settings-tab" data-tab="webhook">表格同步</button>
+            <button class="settings-tab" data-tab="data">数据与备份</button>
+            <button class="settings-tab" data-tab="about">关于</button>
         </div>
-        <textarea id="input" class="input" rows="2" placeholder="写点什么…（Ctrl+V 可直接粘贴图片，Enter 换行，Ctrl+Enter 提交）"></textarea>
-        <div class="input-bar">
-            <div class="seg" id="prioritySeg">
-                <button class="seg-btn" data-p="3" type="button">高</button>
-                <button class="seg-btn active" data-p="2" type="button">中</button>
-                <button class="seg-btn" data-p="1" type="button">低</button>
+
+        <div class="settings-panes" id="settingsPanes">
+
+        <!-- ==================== 外观显示 ==================== -->
+        <div class="settings-pane active" data-pane="appearance">
+        <div class="settings-section">
+            <h4>界面与文字</h4>
+            <div class="settings-row">
+                <label>背景明暗</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="darknessSlider" min="0" max="100" value="70">
+                    <span id="darknessValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">70%</span>
+                </div>
             </div>
-            <div class="input-bar-right">
-                <label class="mini-toggle" title="到点弹通知">
-                    <input type="checkbox" id="remindEnable"> 提醒
-                    <input type="datetime-local" id="remindAt" class="input-datetime">
+            <!-- 音量挪到「计时与提醒」页（属于声音，不属于界面） -->
+            <div class="settings-row">
+                <label>完整文字大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="normalFontSizeSlider" min="50" max="500" value="100">
+                    <span id="normalFontSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>纯净文字大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="cleanFontSizeSlider" min="50" max="500" value="100">
+                    <span id="cleanFontSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>模式标签大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="modeLabelSizeSlider" min="50" max="300" value="100">
+                    <span id="modeLabelSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>呼吸效果</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="pulseToggle" checked>
+                    <span class="toggle-slider"></span>
                 </label>
-                <button id="addBtn" class="btn btn-primary" type="button">添加</button>
+            </div>
+            <div class="settings-row">
+                <label>显示模式标签</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="showModeLabel" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>整体界面宽度</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="containerWidthSlider" min="800" max="1800" step="50" value="1000">
+                    <span id="containerWidthValue" style="font-size: 12px; color: #888; width: 50px; text-align: right;">1000px</span>
+                </div>
+            </div>
+            <!-- 【2026-09-30】日期是否带年份：表格/卡片/提醒徽标统一生效，关掉能省 5 个字符宽度 -->
+            <div class="settings-row">
+                <label>日期显示年份</label>
+                <label class="toggle-switch" title="关掉后只显示「09-30 18:45:31」，窄窗口下更省地方">
+                    <input type="checkbox" id="showYearToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
             </div>
         </div>
-        <div id="preview" class="preview"></div>
-    </section>
 
-    <!-- ==================== 搜索与筛选 ==================== -->
-    <section class="panel">
-        <div class="toolbar">
-            <input id="search" class="input input-search" placeholder="搜索任务内容 / 评论…">
-            <select id="filterStatus" class="select">
-                <option value="all">全部状态</option>
-                <option value="active">未完成</option>
-                <option value="done">已完成</option>
-            </select>
-            <select id="filterPriority" class="select">
-                <option value="all">全部优先级</option>
-                <option value="3">高</option>
-                <option value="2">中</option>
-                <option value="1">低</option>
-            </select>
-            <select id="sortBy" class="select">
-                <option value="time-desc">最新在前</option>
-                <option value="time-asc">最早在前</option>
-                <option value="priority">按优先级</option>
-                <option value="remind">按提醒时间</option>
-            </select>
-        </div>
-    </section>
-
-    <!-- ==================== 任务列表（卡片） ==================== -->
-    <section id="cardsView">
-        <div id="notesList"></div>
-        <div id="emptyHint" class="empty" hidden>暂无任务，上面添加一条试试</div>
-    </section>
-
-    <!-- ==================== 任务列表（表格） ==================== -->
-    <section id="tableView" class="table-wrap" hidden>
-        <table class="task-table">
-            <thead>
-                <tr>
-                    <th>任务内容</th>
-                    <th>优先级</th>
-                    <th>类型</th>
-                    <th>状态</th>
-                    <th>创建时间</th>
-                    <th>完成时间</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody id="tableBody"></tbody>
-        </table>
-    </section>
-
-    <!-- ==================== 归档 ==================== -->
-    <section class="panel archive-panel">
-        <div class="row-between collapsible-head" id="archiveToggle">
-            <h3 class="panel-title">归档历史 <span id="archiveCount" class="muted">0</span></h3>
-            <span id="archiveArrow">▶</span>
-        </div>
-        <div id="archiveBody" hidden>
-            <div class="row-between archive-actions">
-                <button id="archiveDoneBtn" class="btn btn-small" type="button">把已完成任务归档</button>
-                <button id="archiveClearBtn" class="btn btn-small btn-danger" type="button">清空归档</button>
+        <div class="settings-section">
+            <h4>颜色设置</h4>
+            <div class="settings-row">
+                <label>倒计时颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="timerColorPicker" value="#ffffff">
+                </div>
             </div>
-            <div id="archiveList"></div>
+            <div class="settings-row">
+                <label>是否发光</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="glowEnabled" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>发光颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="glowColorPicker" value="#00a1d6">
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>发光程度</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="glowIntensitySlider" min="0" max="100" value="50">
+                    <span id="glowIntensityValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">50%</span>
+                </div>
+            </div>
         </div>
-    </section>
 
-    <footer class="foot">
-        <span id="footStats" class="muted"></span>
-        <span class="muted">· 数据保存在本机（IndexedDB） · <span id="persistState"></span></span>
-    </footer>
-</main>
+        <!-- 背景图（原「选择背景」折叠块，归到外观显示页） -->
+        <div class="settings-section">
+            <div class="collapsible-header" onclick="toggleCollapsible('bgSelector')">
+                <h4 style="display: inline;">选择背景</h4>
+                <span id="bgSelectorArrow">▼</span>
+            </div>
+            <div id="bgSelectorContainer" class="collapsible-content">
+                <div class="bg-selector" id="bgSelector"></div>
+                <button id="importBgBtn" style="margin-top: 10px; padding: 8px 16px; background: rgba(76, 175, 80, 0.2); border: 1px solid rgba(76, 175, 80, 0.5); color: #81c784; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">导入背景图片</button>
+            </div>
+        </div>
+        </div><!-- /外观显示 -->
 
-<!-- ==================== 设置面板（分栏） ==================== -->
-<div class="settings-mask" id="settingsMask" hidden></div>
-<aside class="settings-panel" id="settingsPanel" hidden>
-    <div class="settings-head">
-        <strong>设置</strong>
-        <button id="settingsClose" class="chip chip-icon" type="button" title="关闭">✕</button>
-    </div>
-
-    <!-- 分栏：和桌面版保持同一套分类 -->
-    <nav class="settings-tabs" id="settingsTabs">
-        <button class="settings-tab active" data-tab="appearance" type="button">外观显示</button>
-        <button class="settings-tab" data-tab="timer" type="button">计时与提醒</button>
-        <button class="settings-tab" data-tab="task" type="button">任务与视图</button>
-        <button class="settings-tab" data-tab="data" type="button">数据与备份</button>
-        <button class="settings-tab" data-tab="about" type="button">关于</button>
-    </nav>
-
-    <div class="settings-panes" id="settingsPanes">
-
-        <!-- 外观显示 -->
-        <section class="settings-pane active" data-pane="appearance">
+        <!-- ==================== 计时与提醒 ==================== -->
+        <div class="settings-pane" data-pane="timer">
             <div class="settings-section">
-                <h4>主题与文字</h4>
+                <h4>声音</h4>
                 <div class="settings-row">
-                    <label>主题</label>
-                    <select id="set-theme" class="select">
-                        <option value="dark">深色</option>
-                        <option value="light">浅色</option>
-                    </select>
-                </div>
-                <div class="settings-row">
-                    <label>正文字号</label>
-                    <div class="range-wrap">
-                        <input type="range" id="set-fontSize" min="12" max="20" step="1" value="15">
-                        <span id="set-fontSizeValue" class="range-value">15px</span>
+                    <label>音量大小</label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="range" id="volumeSlider" min="0" max="300" value="100">
+                        <span id="volumeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
                     </div>
-                </div>
-                <div class="settings-row">
-                    <label>界面宽度</label>
-                    <div class="range-wrap">
-                        <input type="range" id="set-containerWidth" min="700" max="1600" step="50" value="1000">
-                        <span id="set-containerWidthValue" class="range-value">1000px</span>
-                    </div>
-                </div>
-                <div class="settings-row">
-                    <label>日期显示年份</label>
-                    <label class="switch"><input type="checkbox" id="set-showYear" checked><span></span></label>
-                </div>
-                <div class="settings-row">
-                    <label>时间格式（表格视图）</label>
-                    <select id="set-timeFormat" class="select">
-                        <option value="full">14:30:05</option>
-                        <option value="hm">14:30</option>
-                    </select>
-                </div>
-            </div>
-        </section>
-
-        <!-- 计时与提醒 -->
-        <section class="settings-pane" data-pane="timer">
-            <div class="settings-section">
-                <h4>时长</h4>
-                <div class="settings-row">
-                    <label>工作时长</label>
-                    <div class="range-wrap">
-                        <input type="range" id="set-work" min="1" max="120" step="1" value="25">
-                        <span id="set-workValue" class="range-value">25 分</span>
-                    </div>
-                </div>
-                <div class="settings-row">
-                    <label>休息时长</label>
-                    <div class="range-wrap">
-                        <input type="range" id="set-rest" min="1" max="60" step="1" value="5">
-                        <span id="set-restValue" class="range-value">5 分</span>
-                    </div>
-                </div>
-                <div class="settings-row">
-                    <label>自动开始下一阶段</label>
-                    <label class="switch"><input type="checkbox" id="set-autoNext"><span></span></label>
                 </div>
             </div>
             <div class="settings-section">
-                <h4>提醒与声音</h4>
-                <div class="settings-row">
-                    <label>到点提示音</label>
-                    <label class="switch"><input type="checkbox" id="set-sound" checked><span></span></label>
-                </div>
-                <div class="settings-row">
-                    <label>浏览器通知</label>
-                    <label class="switch"><input type="checkbox" id="set-notify" checked><span></span></label>
-                </div>
-                <div class="settings-hint">
-                    通知需要你在浏览器地址栏旁允许「通知」权限；首次点开始会申请。
+                <h4>计时行为</h4>
+            <div class="settings-row">
+                <label>自动开始下一阶段</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="autoStartNext">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div style="font-size: 12px; color: #888; line-height: 1.6; margin: -4px 0 4px;">
+                开启后，时间到点会自动切换到下一阶段并继续计时，不用再手动点「开始」。
+            </div>
+        </div>
+
+        </div><!-- /计时与提醒 -->
+
+        <!-- ==================== 悬浮窗 ==================== -->
+        <div class="settings-pane" data-pane="float">
+        <div class="settings-section">
+            <h4>悬浮窗</h4>
+            <div class="settings-row">
+                <label>悬浮窗显示任务</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="floatShowTask" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>显示任务图片</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="floatShowImages" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>最多显示图片</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="floatImageLimit" min="1" max="6" value="3">
+                    <span id="floatImageLimitValue" style="font-size: 12px; color: #888; width: 44px; text-align: right;">3 张</span>
                 </div>
             </div>
-        </section>
+            <div class="settings-row">
+                <label>阴影颜色</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="shadowColorPicker" value="#000000">
+                </div>
+            </div>
+            <div class="settings-row">
+                <label>阴影大小</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="shadowSizeSlider" min="0" max="100" value="20">
+                    <span id="shadowSizeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">20%</span>
+                </div>
+            </div>
+        </div>
 
-        <!-- 任务与视图 -->
-        <section class="settings-pane" data-pane="task">
+        </div><!-- /悬浮窗 -->
+
+        <!-- ==================== AI 接入 ==================== -->
+        <div class="settings-pane" data-pane="ai">
+        <div class="settings-section">
+            <h4>🤖 AI 接口（本地）</h4>
+            <div class="settings-row">
+                <label>AI 接口（本地）</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="apiEnabled">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>端口</label>
+                <input type="number" id="apiPort" min="1024" max="65535" step="1"
+                       style="width: 96px; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 13px;">
+            </div>
+            <div class="settings-row">
+                <label>访问令牌</label>
+                <div style="display: flex; align-items: center; gap: 6px; flex: 1;">
+                    <input type="text" id="apiToken" readonly
+                           style="flex: 1; min-width: 0; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                    <button id="apiTokenRegen" title="重新生成令牌" style="padding: 5px 8px; background: rgba(255,255,255,0.08); border: 1px solid #555; color: #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;">↻</button>
+                </div>
+            </div>
+            </div>
             <div class="settings-section">
-                <h4>默认视图</h4>
-                <div class="settings-row">
-                    <label>打开时显示</label>
-                    <select id="set-defaultView" class="select">
-                        <option value="card">卡片</option>
-                        <option value="table">表格</option>
-                    </select>
-                </div>
-                <div class="settings-row">
-                    <label>默认排序</label>
-                    <select id="set-defaultSort" class="select">
-                        <option value="time-desc">最新在前</option>
-                        <option value="time-asc">最早在前</option>
-                        <option value="priority">按优先级</option>
-                    </select>
-                </div>
-                <div class="settings-row">
-                    <label>完成后自动归档</label>
-                    <label class="switch"><input type="checkbox" id="set-autoArchive"><span></span></label>
+                <h4>系统集成</h4>
+            <div class="settings-row">
+                <label>开机自启</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="autoLaunchToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>全局快捷键</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="globalShortcutToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>任务提醒</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="reminderToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div id="apiStatus" style="font-size: 12px; color: #888; line-height: 1.7; margin: 2px 0 6px; word-break: break-all;"></div>
+            <div style="font-size: 12px; color: #888; line-height: 1.7; margin: -2px 0 6px;">
+                快捷键：<b>Ctrl+Alt+Space</b> 开始/暂停 · <b>Ctrl+Alt+M</b> 切换模式 · <b>Ctrl+Alt+F</b> 悬浮窗 · <b>Ctrl+Alt+N</b> 快速记录
+            </div>
+            <button id="apiCopyExample" style="padding: 8px 12px; background: rgba(33, 150, 243, 0.18); border: 1px solid rgba(33, 150, 243, 0.45); color: #90caf9; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">复制调用示例（给 AI / 脚本）</button>
+        </div>
+
+        </div><!-- /AI 接入 -->
+
+        <!-- ==================== 表格同步 ==================== -->
+        <div class="settings-pane" data-pane="webhook">
+        <div class="settings-section">
+            <h4>🔗 WebHook · 同步到表格</h4>
+            <div class="settings-row">
+                <label>启用同步</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="webhookEnabled">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <label>回调地址</label>
+                <input type="text" id="webhookUrl" placeholder="https://…/webhook?key=…"
+                       style="flex: 1; min-width: 0; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+            </div>
+            <div class="settings-row">
+                <label>推送时机</label>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvCreated"> 新增</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvCompleted"> 完成</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvUpdated"> 修改</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvArchived"> 归档</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="whEvDeleted"> 删除</label>
                 </div>
             </div>
-        </section>
+            <div class="settings-row">
+                <label>载荷格式</label>
+                <select id="webhookMode" style="padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                    <option value="wecom">企业微信智能表格（add_records）</option>
+                    <option value="records">通用 records 数组</option>
+                    <option value="flat">通用字段平铺</option>
+                    <option value="text">企业微信群机器人文本</option>
+                    <option value="custom">自定义 JSON 模板</option>
+                </select>
+            </div>
 
-        <!-- 数据与备份 -->
-        <section class="settings-pane" data-pane="data">
+            <!-- 智能表格：字段解析与映射 -->
+            <div id="webhookWecomBox" style="margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; line-height: 1.7; margin-bottom: 4px;">
+                    智能表格的 <code>values</code> 用的是<b>字段 ID</b>（形如 fABCD1），
+                    请到表格「自动化 → 接收外部数据」页面，把右侧的<b>示例 JSON 整段复制</b>粘到下面，点「解析字段」。
+                </div>
+                <textarea id="webhookSchemaJson" rows="4" placeholder='{"schema":[{"field_id":"fABCD1","field_name":"任务内容","field_type":"text"}]}'
+                          style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+                <div style="display: flex; gap: 8px; margin: 6px 0;">
+                    <button id="webhookParseBtn" style="flex: 1; padding: 7px 12px; background: rgba(255, 183, 77, 0.16); border: 1px solid rgba(255, 183, 77, 0.45); color: #ffcc80; border-radius: 6px; cursor: pointer; font-size: 13px;">解析字段</button>
+                </div>
+                <div id="webhookFieldRows" style="display: flex; flex-direction: column; gap: 6px;"></div>
+            </div>
+
+            <div id="webhookTemplateRow" style="display: none; margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; margin-bottom: 4px;">自定义 JSON 模板，可用 {{任务内容}} {{优先级}} {{状态}} {{创建时间}} {{records}} {{json}} 等占位符</div>
+                <textarea id="webhookTemplate" rows="4" placeholder='{"action":"{{action}}","任务内容":"{{任务内容}}","优先级":"{{优先级}}"}' style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+            </div>
+
+            <div id="webhookGenericBox" style="display: none; margin: 0 0 8px;">
+                <div style="font-size: 12px; color: #888; margin-bottom: 4px;">列名映射（左边是推送出去的列名，右边是数据来源字段）</div>
+                <textarea id="webhookFields" rows="6" style="width: 100%; box-sizing: border-box; padding: 6px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; resize: vertical;"></textarea>
+            </div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <button id="webhookSaveBtn" style="flex: 1; padding: 8px 12px; background: rgba(76, 175, 80, 0.18); border: 1px solid rgba(76, 175, 80, 0.45); color: #a5d6a7; border-radius: 6px; cursor: pointer; font-size: 13px;">保存</button>
+                <button id="webhookTestBtn" style="flex: 1; padding: 8px 12px; background: rgba(33, 150, 243, 0.18); border: 1px solid rgba(33, 150, 243, 0.45); color: #90caf9; border-radius: 6px; cursor: pointer; font-size: 13px;">发送测试</button>
+            </div>
+            <div id="webhookLog" style="font-size: 12px; color: #888; line-height: 1.6; max-height: 150px; overflow-y: auto; word-break: break-all;"></div>
+        </div>
+
+        </div><!-- /表格同步 -->
+
+        <!-- ==================== 数据与备份 ==================== -->
+        <div class="settings-pane" data-pane="data">
             <div class="settings-section">
                 <h4>本地数据</h4>
                 <div id="dataStats" class="settings-hint">正在统计…</div>
-                <button id="exportDataBtn" class="settings-btn-block info" type="button">导出全部数据（JSON）</button>
-                <button id="importDataBtn" class="settings-btn-block ok" type="button">导入数据（JSON）</button>
-                <input type="file" id="importDataFile" accept=".json,application/json" hidden>
-                <button id="clearDataBtn" class="settings-btn-block danger" type="button">清空本机数据（危险）</button>
-                <button id="persistBtn" class="settings-btn-block" type="button">申请「持久化存储」（防浏览器自动清理）</button>
+                <button id="exportDataBtn" class="settings-btn-block info">导出全部数据（JSON）</button>
+                <button id="importDataBtn" class="settings-btn-block ok">导入数据（JSON）</button>
+                <input type="file" id="importDataFile" accept=".json,application/json" style="display: none;">
+                <button id="clearLocalDataBtn" class="settings-btn-block danger">清空本地缓存（危险）</button>
                 <div class="settings-hint">
-                    网页版的数据存在浏览器的 IndexedDB 里：换浏览器 / 清浏览数据 / 隐私模式都会丢，
-                    记得定期导出 JSON 备份。
+                    数据默认存在你自己电脑上：桌面版在 <code>%APPDATA%\计时器</code>，
+                    网页版在浏览器 IndexedDB（换浏览器/清浏览数据会丢，记得定期导出）。
                 </div>
             </div>
-        </section>
+        </div><!-- /数据与备份 -->
 
-        <!-- 关于 -->
-        <section class="settings-pane" data-pane="about">
+        <!-- ==================== 关于 ==================== -->
+        <div class="settings-pane" data-pane="about">
             <div class="settings-section">
                 <h4>关于</h4>
-                <div class="settings-hint" id="aboutVersion">专注计时器 · 网页版 v1.0</div>
+                <div class="settings-hint" id="aboutVersion">版本读取中…</div>
                 <div class="settings-hint">
-                    桌面版功能更全（全局快捷键、悬浮窗、AI 本地接口、企业微信表格同步）；
-                    网页版与桌面版共用同一套数据格式，导出的 JSON 可以互相导入。
+                    <b>快捷键</b>：Ctrl+Alt+Space 开始/暂停 · Ctrl+Alt+M 切换模式 · Ctrl+Alt+F 悬浮窗 · Ctrl+Alt+N 快速记录
                 </div>
-                <div class="settings-hint" id="aboutStorage"></div>
+                <div class="settings-hint">
+                    AI 接口自描述：<code>GET /api/schema</code> ｜ 命令行：<code>timer status</code>
+                </div>
             </div>
-        </section>
+        </div><!-- /关于 -->
+
+        </div><!-- /settings-panes -->
+        <input type="file" id="bgFileInput" accept="image/*" style="display: none;">
     </div>
-</aside>
 
-<!-- 图片预览 -->
-<div class="img-viewer" id="imgViewer" hidden>
-    <img id="imgViewerImg" alt="预览">
-</div>
+    <div class="container">
+        <div class="timer-section">
+            <div class="mode" id="modeText">工作时间</div>
+            <div class="time" id="timeText">
+                <span id="min">25</span>:<span id="sec">00</span>
+            </div>
 
-<div id="toast" class="toast" hidden></div>
+            <div class="btn-group">
+                <button id="startBtn">开始</button>
+                <button id="saveTimeBtn">保存</button>
+                <button id="switchBtn">切换</button>
+                <div style="display: inline-flex; align-items: center;">
+                    <button id="openFloatBtn">悬浮窗</button>
+                    <button id="floatLockBtn" style="display: none; margin-left: 5px; padding: 8px 12px; font-size: 16px;" title="锁定/解锁悬浮窗">🔓</button>
+                </div>
+                <button id="toggleCleanMode">纯净模式</button>
+            </div>
+        </div>
 
-<script src="app.js"></script>
+        <div class="notes-container">
+            <!-- 核心输入区：只保留最高频的录入操作 -->
+            <div class="note-input-wrapper">
+                <div id="noteInput" class="note-input" contenteditable="true" placeholder="输入本次任务…"></div>
+                <div class="priority-row">
+                    <div class="priority-btn p1 active" data-p="1">① 不紧急</div>
+                    <div class="priority-btn p2" data-p="2">② 中等</div>
+                    <div class="priority-btn p3" data-p="3">③ 紧急</div>
+                </div>
+                <div class="type-row">
+                    <div class="type-btn short active" data-type="short">短期</div>
+                    <div class="type-btn long" data-type="long">长期</div>
+                </div>
+                <div class="action-buttons">
+                    <button id="addNoteBtn">添加</button>
+                </div>
+            </div>
+
+            <!-- 折叠式工具面板：收纳排序 / 筛选 / 视图 / 日期 / 类型 / 批量操作 -->
+            <div class="tool-panel" id="toolPanel">
+                <div class="tool-panel-header" onclick="toggleCollapsible('toolPanel')">
+                    <span class="tool-panel-title">⚙ 视图 · 筛选 · 批量</span>
+                    <span class="tool-panel-summary" id="toolPanelSummary"></span>
+                    <span class="tool-panel-arrow" id="toolPanelArrow">▼</span>
+                </div>
+                <div id="toolPanelContainer" class="tool-panel-body">
+                    <div class="tool-group">
+                        <span class="tool-group-label">搜索</span>
+                        <div class="tool-btn-row">
+                            <input type="text" id="searchInput" placeholder="搜索任务内容…"
+                                   style="flex: 1; min-width: 160px; padding: 5px 10px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 13px;">
+                            <button id="searchClearBtn" style="padding: 5px 10px; background: rgba(255,255,255,0.08); border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px;">清除</button>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">排序</span>
+                        <div class="sort-buttons">
+                            <button id="sortTime" class="sort-btn">时间 <span>↑</span></button>
+                            <button id="sortPriority" class="sort-btn">紧急 <span>↑</span></button>
+                            <button id="sortDone" class="sort-btn">未完成 <span>↑</span></button>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">状态筛选</span>
+                        <div class="filter-dropdown">
+                            <button id="filterToggle" class="filter-toggle-btn">筛选: 全部 ▼</button>
+                            <div id="filterMenu" class="filter-menu">
+                                <button id="filterAll" class="filter-option active">全部</button>
+                                <button id="filterUndone" class="filter-option">未完成</button>
+                                <button id="filterDone" class="filter-option">已完成</button>
+                                <button id="filterP3" class="filter-option">紧急</button>
+                                <button id="filterP2" class="filter-option">中等</button>
+                                <button id="filterP1" class="filter-option">不紧急</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">视图</span>
+                        <div class="tool-btn-row">
+                            <button class="view-toggle-btn active" onclick="toggleView('card')">卡片视图</button>
+                            <button class="view-toggle-btn" onclick="toggleView('table')">表格视图</button>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">任务类型</span>
+                        <div class="tool-btn-row">
+                            <button class="type-toggle-btn active" onclick="toggleTypeView('all')">全部</button>
+                            <button class="type-toggle-btn" onclick="toggleTypeView('short')">短期</button>
+                            <button class="type-toggle-btn" onclick="toggleTypeView('long')">长期</button>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">日期范围</span>
+                        <div class="tool-btn-row">
+                            <button id="btnThisWeek" class="date-filter-btn active" onclick="setDateFilterMode('week')">本周</button>
+                            <button id="btnAllTime" class="date-filter-btn" onclick="setDateFilterMode('all')">全部时间</button>
+                            <button id="btnCustomDate" class="date-filter-btn" onclick="setDateFilterMode('custom')">自定义</button>
+                            <div id="customDateInputs" style="display: none; align-items: center; gap: 5px;">
+                                <input type="date" id="filterStartDate" onchange="applyCustomDateFilter()" style="padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                                <span style="color: #aaa; font-size: 12px;">至</span>
+                                <input type="date" id="filterEndDate" onchange="applyCustomDateFilter()" style="padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">
+                            </div>
+                            <span id="dateRangeDisplay" class="tool-date-display"></span>
+                        </div>
+                    </div>
+
+                    <div class="tool-group">
+                        <span class="tool-group-label">批量操作</span>
+                        <div class="action-buttons">
+                            <button id="clearNotes">清空</button>
+                            <button id="archiveBtn" style="background: rgba(103, 58, 183, 0.25); border: 1px solid rgba(103, 58, 183, 0.4); color: #b39ddb;">归档已完成</button>
+                            <button id="exportBtn">导出</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="notesList"></div>
+            <div id="notesListSentinel" style="height: 40px; line-height: 40px; margin: 15px 0; text-align: center; color: #888; font-size: 13px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05); cursor: pointer; display: none;">向下滚动加载更多历史任务</div>
+
+            <!-- 归档历史面板 -->
+            <div class="archive-container" id="archiveContainer">
+                <div class="archive-header" id="archiveHeader" onclick="toggleArchiveMainPanel()">
+                    <div class="archive-header-title">
+                        <span>📜 已完成任务历史</span>
+                        <span class="archive-header-count" id="archiveMainCount">0</span>
+                    </div>
+                    <span class="archive-header-arrow" id="archiveMainArrow">▶</span>
+                </div>
+                <div id="archiveMainList" style="display: none;">
+                    <!-- 按天分组的归档任务列表 -->
+                </div>
+            </div>
+            
+            <!-- 右键菜单 -->
+            <div class="context-menu" id="contextMenu">
+                <div class="context-menu-item" id="pasteImageItem">粘贴图片</div>
+                <div class="context-menu-item" id="copyImageItem" style="display: none;">复制图片</div>
+                <div class="context-menu-item" id="copyImageFileItem" style="display: none;">复制为文件（微信兼容）</div>
+                <div class="context-menu-item" id="remindTaskItem" style="display: none;">设置提醒…</div>
+                <div class="context-menu-item" id="pushWebhookItem" style="display: none;">推送到表格</div>
+            </div>
+            
+            <div id="tableView" class="table-view-container">
+
+                
+                <table class="task-table">
+                    <thead>
+                        <tr>
+                            <th>任务内容</th>
+                            <th>优先级</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>完成时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+                <div id="tableSentinel" style="height: 40px; line-height: 40px; margin: 15px 0; text-align: center; color: #888; font-size: 13px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.05); cursor: pointer; display: none;">向下滚动加载更多任务</div>
+            </div>
+        </div>
+    </div>
+
+        <script src="bridge.js"></script>
+        <script src="renderer.js"></script>
+    
+    <!-- 微信风格图片预览 Modal -->
+    <div id="imgModal" class="img-modal">
+        <!-- 核心预览视口 -->
+        <div class="wechat-img-viewport" id="wechatViewport">
+            <div class="wechat-img-container" id="wechatImgContainer">
+                <img id="modalImg" src="" alt="大图">
+                <canvas id="wechatPainterCanvas"></canvas>
+            </div>
+        </div>
+        
+        <!-- 编辑按钮 -->
+        <button class="wechat-edit-btn" id="wechatEditBtn">编辑</button>
+        
+        <!-- 底部编辑工具栏 -->
+        <div class="wechat-edit-toolbar" id="wechatEditToolbar">
+            <div style="display: flex; align-items: center;">
+                <button class="wechat-tool-btn active" id="wechatBrushBtn">✏️ 画笔</button>
+                <button class="wechat-tool-btn" id="wechatRectBtn">⬜ 矩形</button>
+                
+                <div class="wechat-colors">
+                    <span class="wechat-color-dot active" data-color="#ff4444" style="background:#ff4444;"></span>
+                    <span class="wechat-color-dot" data-color="#4caf50" style="background:#4caf50;"></span>
+                    <span class="wechat-color-dot" data-color="#00a1d6" style="background:#00a1d6;"></span>
+                    <span class="wechat-color-dot" data-color="#ffeb3b" style="background:#ffeb3b;"></span>
+                    <span class="wechat-color-dot" data-color="#ffffff" style="background:#ffffff;"></span>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button class="wechat-tool-btn" id="wechatUndoBtn" style="background:rgba(255,255,255,0.05);">撤销</button>
+                <button class="wechat-tool-btn" id="wechatCancelBtn" style="background:rgba(244,67,54,0.15); color:#ef9a9a; border-color:rgba(244,67,54,0.3);">取消</button>
+                <button class="wechat-tool-btn" id="wechatDoneBtn" style="background:rgba(76,175,80,0.2); color:#a5d6a7; border-color:rgba(76,175,80,0.3);">完成</button>
+            </div>
+        </div>
+
+        <!-- 微信底部 ActionSheet 菜单 -->
+        <div class="wechat-action-sheet" id="wechatActionSheet">
+            <button class="wechat-sheet-item" id="wechatCopyBtn">复制图片</button>
+            <button class="wechat-sheet-item cancel" id="wechatSheetCancelBtn">取消</button>
+        </div>
+
+        <!-- Toast 提示 -->
+        <div class="wechat-toast" id="wechatToast">已成功复制图片到剪贴板！</div>
+    </div>
 </body>
 </html>

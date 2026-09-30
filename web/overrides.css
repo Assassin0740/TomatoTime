@@ -1,0 +1,30 @@
+/* overrides.css —— 网页版相对桌面版的差异
+ *
+ * 原则：界面与桌面版 100% 一致，只隐藏浏览器做不到 / 不该露出的
+ * 桌面版专属功能（悬浮窗、AI 本地接口、表格同步）。
+ * 这些面板的 DOM 与 wiring 代码仍完整保留（renderer.js 零改动），
+ * 只是视觉上不出现，防止用户在网页里点了没效果。
+ */
+
+/* 设置面板：桌面版专属的三个分栏 */
+.settings-tab[data-tab="float"],
+.settings-tab[data-tab="ai"],
+.settings-tab[data-tab="webhook"] {
+    display: none !important;
+}
+.settings-pane[data-pane="float"],
+.settings-pane[data-pane="ai"],
+.settings-pane[data-pane="webhook"] {
+    display: none !important;
+}
+
+/* 主界面：悬浮窗相关按钮（悬浮窗本来也开不出来） */
+#openFloatBtn,
+#floatLockBtn {
+    display: none !important;
+}
+
+/* 右键菜单里的「推送到表格」（桌面版专属） */
+#pushWebhookItem {
+    display: none !important;
+}
