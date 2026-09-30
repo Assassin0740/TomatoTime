@@ -38,10 +38,15 @@ const DEFAULT_WEBHOOK_CONFIG = {
     template: '',
     /** 用户从「接收外部数据」页面粘贴的示例 JSON，用于解析出字段 ID 与列类型 */
     schemaJson: '',
-    /** 解析结果：[{ id, name, type }] */
+    /** 解析结果：[{ id, name, type, enum? }]；enum = 单/多选列的预设选项，写入前会自动对齐（见 coerceSelectText） */
     schemaFields: [],
     /** 字段 ID → 内部数据来源：{ 'fABCD1': 'content' } */
     mapping: {},
+    /**
+     * 字段 ID → 固定文本：mapping 选 'const' 时写入该列。
+     * 例如「所属项目」= 拯救小猫、「所属部门」= 研发部 —— 内部数据源里没有的常量靠它补。
+     */
+    constants: {},
     /** 任务 id → 表格 record_id（用于把「完成/修改」变成更新而不是新增） */
     recordIds: {},
     /** 通用模式下的列名映射 */
@@ -59,6 +64,15 @@ const DEFAULT_WEBHOOK_CONFIG = {
         '任务ID': 'id'
     }
 };
+
+/** 展示用：只留 webhook key 的前 8 位，避免整串密钥被截图/接口带出去 */
+function maskWebhookUrl(url) {
+    const s = String(url || '');
+    const i = s.indexOf('key=');
+    if (i === -1) return s;
+    const key = s.slice(i + 4);
+    return s.slice(0, i + 4) + (key.length > 8 ? key.slice(0, 8) + '…（共 ' + key.length + ' 位）' : key);
+}
 
 const EVENT_LABELS = {
     created: '新增任务',
@@ -80,6 +94,7 @@ const SOURCES = [
     { key: 'doneAt', label: '完成时间' },
     { key: 'remindAt', label: '提醒时间' },
     { key: 'comments', label: '评论' },
+    { key: 'const', label: '固定文本（右侧填写内容）' },
     { key: 'commentCount', label: '评论数' },
     { key: 'imageCount', label: '图片数' },
     { key: 'image', label: '图片（base64）' },
@@ -162,10 +177,85 @@ function fingerprint(task) {
     return [f.content, f.status, f.priorityRaw, f.type, f.remindAt, f.commentCount, f.imageCount].join(' ');
 }
 
+/** 取单选/多选列的预设选项：可能是 ['A','B']，也可能是 [{ text: 'A' }] */
+function pickOptions(node, optionKeys) {
+    for (const k of optionKeys) {
+        const v = node[k];
+        if (!Array.isArray(v) || !v.length) continue;
+        const out = v.map(item => {
+            if (typeof item === 'string') return item.trim();
+            if (item && typeof item === 'object') {
+                return String(item.text || item.name || item.title || item.label || item.value || '').trim();
+            }
+            return '';
+        }).filter(Boolean);
+        if (out.length) return out;
+    }
+    return [];
+}
+
+/**
+ * 把内部文本对齐到表格单/多选列的预设选项。
+ *
+ * 为什么需要它：应用内部的「优先级」只有 高/中/低，「状态」只有 已完成/未完成，
+ * 而表格里的枚举常常是 最高优/高优/低优、已完成/进行中/未启动/已逾期 ——
+ * 直接写进去会被企业微信以 2023010（选项值不合法）拒收**整批**。
+ * 所以这里做一次「就近对齐」：完全一致 > 包含关系 > 关键词规则；
+ * 实在对不上返回空串，调用方会跳过该列（宁可少写一列，也不要整批失败）。
+ */
+function coerceSelectText(raw, options) {
+    const text = String(raw === undefined || raw === null ? '' : raw).trim();
+    if (!text) return '';
+    const list = (Array.isArray(options) ? options : []).map(o => String(o).trim()).filter(Boolean);
+    if (!list.length) return text;                       // 没解析到选项：保持原样，交服务端判断
+    if (list.indexOf(text) !== -1) return text;          // 完全一致
+
+    // ① 选项包含内部值：「高」→「高优」（多个命中时取最短的，避免误选「最高优」）
+    const contains = list.filter(o => o.indexOf(text) !== -1);
+    if (contains.length) return contains.slice().sort((a, b) => a.length - b.length)[0];
+
+    // ② 内部值包含选项：「最高优」→「高优」（取最长的，信息量最大）
+    const reversed = list.filter(o => text.indexOf(o) !== -1);
+    if (reversed.length) return reversed.slice().sort((a, b) => b.length - a.length)[0];
+
+    // ③ 关键词规则：完成状态
+    const stateRules = [
+        [/^(已完成|完成|done)$/i, ['已完成', '完成', '已结束']],
+        [/^(未完成|未完|进行中|doing)$/i, ['进行中', '未启动', '未完成', '进行']],
+        [/^(未启动|未开始|todo)$/i, ['未启动', '未开始', '进行中']],
+        [/^(已逾期|逾期|超期)$/i, ['已逾期', '已超期']]
+    ];
+    for (const [re, prefer] of stateRules) {
+        if (re.test(text)) {
+            for (const p of prefer) if (list.indexOf(p) !== -1) return p;
+        }
+    }
+
+    // ④ 关键词规则：优先级
+    const priorityRules = [
+        [/最高|紧急|urgent/i, ['最高优', '高优', '紧急']],
+        [/高|high/i, ['高优', '最高优', '高']],
+        [/中|medium|normal/i, ['中优', '中', '一般']],
+        [/低|low/i, ['低优', '低', '不紧急']]
+    ];
+    for (const [re, prefer] of priorityRules) {
+        if (re.test(text)) {
+            for (const p of prefer) if (list.indexOf(p) !== -1) return p;
+        }
+    }
+    return '';
+}
+
 /**
  * 从用户粘贴的示例 JSON 里挖出字段定义。
- * 结构在不同页面版本里叫法不一，所以这里做「宽容解析」：
- * 只要一个对象同时有 id 类字段和 name 类字段，就当成一个列定义。
+ *
+ * 结构在不同页面版本里叫法不一，所以做「宽容解析」，两种形态都要认：
+ *   ① 数组 + 字段自带 id：  schema: [ { field_id: 'fA1', field_name: '任务内容', field_type: 'text' } ]
+ *   ② 对象 map（**企业微信现行示例 JSON 就是这种**）：
+ *        schema: { fqmfGP: { title: '任务名称', type: 'text' },
+ *                  f04uVx: { title: '优先级', type: 'single_select', enum: ['最高优','高优','低优'] } }
+ *      —— 这里字段 ID 是**对象的 key**，定义里只有 title/type。
+ *      【2026-09-30 修复】此前只认形态 ①，用户按文档粘形态 ② 会解析出 0 个字段。
  */
 function parseSchema(input) {
     let json = input;
@@ -182,6 +272,8 @@ function parseSchema(input) {
     const idKeys = ['field_id', 'fieldId', 'id', 'key', 'field_key'];
     const nameKeys = ['field_name', 'fieldName', 'name', 'title', 'label', 'column_name'];
     const typeKeys = ['field_type', 'fieldType', 'type', 'value_type', 'valueType'];
+    // 单/多选列的预设选项：不同版本叫法不一，全捞一遍（对齐枚举时要用）
+    const optionKeys = ['enum', 'options', 'choices', 'items', 'option_list', 'optionList'];
 
     const pick = (obj, keys) => {
         for (const k of keys) {
@@ -190,43 +282,58 @@ function parseSchema(input) {
         return '';
     };
 
-    const walk = node => {
+    /** 字段 ID 长得像 f 开头的一串（fqmfGP / f8o4LT / f04uVx…），用于形态 ② 的 key 判定 */
+    const looksLikeFieldId = k => /^f[a-z0-9_-]{3,}$/i.test(String(k || ''));
+
+    /** keyHint：对象形态下把父级 key 传下来当候选字段 ID（企微示例 JSON 的字段 ID 就是 key） */
+    const walk = (node, keyHint) => {
         if (!node) return;
         if (Array.isArray(node)) {
-            node.forEach(walk);
+            node.forEach(item => walk(item, keyHint));
             return;
         }
         if (typeof node !== 'object') return;
 
-        const id = pick(node, idKeys);
+        const id = pick(node, idKeys) || (looksLikeFieldId(keyHint) ? String(keyHint) : '');
         const name = pick(node, nameKeys);
         if (id && name && !seen.has(id)) {
             seen.add(id);
-            found.push({ id: id, name: name, type: pick(node, typeKeys) || 'text' });
+            const field = { id: id, name: name, type: pick(node, typeKeys) || 'text' };
+            const options = pickOptions(node, optionKeys);
+            if (options.length) field.enum = options;
+            found.push(field);
         }
-        for (const k of Object.keys(node)) walk(node[k]);
+        for (const k of Object.keys(node)) walk(node[k], k);
     };
-    walk(json);
+    walk(json, '');
     return found;
 }
 
-/** 按列名猜一个默认映射，省得用户一个个手动选 */
+/**
+ * 按列名猜一个默认映射，省得用户一个个手动选。
+ *
+ * 【2026-09-30 修复】规则顺序必须「具体在前、笼统在后」：
+ * 旧顺序把「内容/任务/标题」放在最前，导致「任务状态」「任务描述（含状态）」这类列
+ * 被 content 抢走（实测 任务状态 → content）。现在把 图片数/图片/优先级/状态/类型/
+ * 时间/评论/ID 等具体规则全部前置，content 只做最后的兜底。
+ */
 function guessSource(fieldName) {
     const n = String(fieldName || '');
-    if (/图片数|附件数/.test(n)) return 'imageCount';
-    if (/图片|截图|photo/.test(n)) return 'image';
-    if (/内容|标题|任务|待办|事项|描述|name|title|content|task/i.test(n)) return 'content';
-    if (/优先级|重要程度|紧急/.test(n)) return 'priority';
-    if (/状态|完成情况|进度状态|status/i.test(n)) return 'status';
-    if (/类型|分类/.test(n)) return 'type';
-    if (/创建|提交|建立|登记/.test(n)) return 'createdAt';
-    if (/完成时间|结束时间|完成于|归档时间/.test(n)) return 'doneAt';
-    // 复选框列（是否完成 / 已完成）比「状态」文本列更常见，放前面判
-    if (/是否完成|是否已|已完成|done/i.test(n)) return 'done';
-    if (/提醒|截止|due/.test(n)) return 'remindAt';
-    if (/评论|备注|说明|详情/.test(n)) return 'comments';
+    if (/图片数|附件数|图片数量/.test(n)) return 'imageCount';
     if (/评论数/.test(n)) return 'commentCount';
+    if (/图片|截图|photo|image/i.test(n)) return 'image';
+    if (/优先级|重要程度|紧急/.test(n)) return 'priority';
+    // 复选框列（是否完成 / 已完成 / done）比「状态」文本列更常见，放前面判
+    if (/是否完成|是否已|已完成|done/i.test(n)) return 'done';
+    if (/状态|完成情况|进度状态|status/i.test(n)) return 'status';
+    if (/类型|分类|category/i.test(n)) return 'type';
+    if (/完成时间|结束时间|完成于|归档时间/.test(n)) return 'doneAt';
+    if (/创建|提交|建立|登记|启动时间|开始时间/.test(n)) return 'createdAt';
+    if (/提醒|截止|到期|due|deadline/i.test(n)) return 'remindAt';
+    if (/评论|备注|说明|详情/.test(n)) return 'comments';
     if (/ID|编号|序号/i.test(n)) return 'id';
+    // 兜底：名字里带「内容/标题/任务/待办/事项/描述」的当任务内容
+    if (/内容|标题|任务|待办|事项|描述|name|title|content|task/i.test(n)) return 'content';
     return '';
 }
 
@@ -276,6 +383,7 @@ function createWebhook(options) {
             schemaJson: c.schemaJson || '',
             schemaFields: Array.isArray(c.schemaFields) ? c.schemaFields : [],
             mapping: Object.assign({}, c.mapping || {}),
+            constants: Object.assign({}, c.constants || {}),
             recordIds: Object.assign({}, c.recordIds || {}),
             fields: Object.assign({}, DEFAULT_WEBHOOK_CONFIG.fields, c.fields || {})
         };
@@ -332,6 +440,31 @@ function createWebhook(options) {
         }
     }
 
+    /**
+     * 「固定文本」列（mapping = 'const'）：把配置里写死的文本按列类型包装成企业微信要的形态。
+     * 用于内部数据源没有的常量列，例如 所属项目 = 拯救小猫、所属部门 = 研发部。
+     */
+    function constValue(field, text) {
+        const t = String(text === undefined || text === null ? '' : text).trim();
+        if (!t) return undefined;
+        const type = field.type;
+        if (isSelectType(type)) {
+            const aligned = (Array.isArray(field.enum) && field.enum.length) ? coerceSelectText(t, field.enum) : t;
+            if (!aligned) return undefined;
+            return [{ text: aligned }];
+        }
+        if (isCheckboxType(type)) return t === 'true' || t === '1';
+        if (isDateType(type)) {
+            const ts = Number(t);
+            return ts ? String(ts) : undefined;
+        }
+        if (isNumberType(type)) {
+            const n = Number(t);
+            return isNaN(n) ? undefined : n;
+        }
+        return t;
+    }
+
     /** 按列类型把数据源的值整理成企业微信要的形态 */
     function toWecomValue(source, field, task, action) {
         const raw = sourceValue(source, task, action);
@@ -352,16 +485,23 @@ function createWebhook(options) {
         }
         if (isDateType(type)) {
             const ts = typeof raw === 'number' ? raw : (source.endsWith('Text') ? 0 : Number(raw) || 0);
-            if (!ts) {
-                // 数据源是文本，但目标列是日期：尝试把 "2026-09-28 18:00" 解析回去
-                const parsed = Date.parse(String(raw).replace(' ', 'T'));
-                if (isNaN(parsed)) return undefined;
-                return String(parsed);
-            }
-            return String(ts);
+            if (ts) return String(ts);
+            // 【2026-09-30 修复】没有这个时间（如任务没设截止/完成时间）时必须跳过该列：
+            // 旧实现会掉进下面的文本解析分支，把 0 解析成 2000-01-01 写进表格。
+            if (typeof raw === 'number' || /^\s*-?\d+\s*$/.test(String(raw))) return undefined;
+            // 数据源是文本，但目标列是日期：尝试把 "2026-09-28 18:00" 解析回去
+            const parsed = Date.parse(String(raw).replace(' ', 'T'));
+            if (isNaN(parsed)) return undefined;
+            return String(parsed);
         }
         if (isSelectType(type)) {
-            const text = String(raw).slice(0, 100);
+            // 【2026-09-30】有预设选项时先做枚举对齐（避免 2023010 选项不合法把整批拒掉）；
+            // 对不上就返回 undefined = 跳过这一列，宁可少写一列也别整批失败。
+            let text = String(raw).slice(0, 100);
+            if (Array.isArray(field.enum) && field.enum.length) {
+                text = coerceSelectText(text, field.enum);
+                if (!text) return undefined;
+            }
             return [{ text: text }];
         }
         if (isNumberType(type)) {
@@ -386,7 +526,9 @@ function createWebhook(options) {
                 if (!source) continue;
                 let v;
                 try {
-                    v = toWecomValue(source, field, task, action);
+                    v = source === 'const'
+                        ? constValue(field, (cfg.constants || {})[field.id])
+                        : toWecomValue(source, field, task, action);
                 } catch (e) {
                     v = undefined;
                 }
@@ -698,6 +840,28 @@ function createWebhook(options) {
         return post(payload, c.url).then(res => Object.assign({}, res, { payload: payload }));
     }
 
+    /**
+     * 配置快照（给 API / 设置面板读）。
+     * url 会打码（只留 key 前 8 位）—— 它是这张表的写入密钥，不能被截图带走。
+     */
+    function info() {
+        const c = config();
+        return {
+            enabled: c.enabled,
+            url: maskWebhookUrl(c.url),
+            hasUrl: !!c.url,
+            mode: c.mode,
+            events: Object.assign({}, c.events),
+            schemaFieldCount: c.schemaFields.length,
+            schemaFields: c.schemaFields.map(f => Object.assign({}, f)),
+            mapping: Object.assign({}, c.mapping),
+            constants: Object.assign({}, c.constants),
+            recordCount: Object.keys(c.recordIds).length,
+            sources: SOURCES,
+            history: history.slice()
+        };
+    }
+
     /** 更新配置片段（由设置面板调用） */
     function updateConfig(patch) {
         const current = getConfig() || {};
@@ -726,11 +890,17 @@ function createWebhook(options) {
             // 允许调用方直接给字段定义（脚本 / API 里更省事）
             if (Array.isArray(patch.schemaFields)) {
                 next.schemaFields = patch.schemaFields
-                    .map(f => ({
-                        id: String((f && (f.id || f.field_id || f.fieldId)) || ''),
-                        name: String((f && (f.name || f.field_name || f.fieldName)) || ''),
-                        type: String((f && (f.type || f.field_type || f.fieldType)) || 'text')
-                    }))
+                    .map(f => {
+                        const field = {
+                            id: String((f && (f.id || f.field_id || f.fieldId)) || ''),
+                            name: String((f && (f.name || f.field_name || f.fieldName)) || ''),
+                            type: String((f && (f.type || f.field_type || f.fieldType)) || 'text')
+                        };
+                        // 选项列表：可以给 enum，也可以给 options / choices（与示例 JSON 里的叫法对齐）
+                        const options = pickOptions(f || {}, optionKeys);
+                        if (options.length) field.enum = options;
+                        return field;
+                    })
                     .filter(f => f.id);
             }
             if (patch.parseSchemaOnly) {
@@ -747,6 +917,14 @@ function createWebhook(options) {
             if (patch.mapping && typeof patch.mapping === 'object') {
                 next.mapping = Object.assign({}, next.mapping || {}, patch.mapping);
             }
+            // 固定文本列（例如 所属项目=拯救小猫）：只做合并，不动已有键
+            if (patch.constants && typeof patch.constants === 'object') {
+                next.constants = Object.assign({}, next.constants || {}, patch.constants);
+            }
+            // record_id 缓存：允许外部（脚本/API）回填，保证「完成/修改」走更新而不是重复新增
+            if (patch.recordIds && typeof patch.recordIds === 'object') {
+                next.recordIds = Object.assign({}, next.recordIds || {}, patch.recordIds);
+            }
         }
         saveConfig(next);
         return next;
@@ -757,12 +935,16 @@ function createWebhook(options) {
         EVENT_LABELS: EVENT_LABELS,
         SOURCES: SOURCES,
         config: config,
+        info: info,
         updateConfig: updateConfig,
+        parseSchema: parseSchema,
+        coerceSelectText: coerceSelectText,
         push: push,
         diffAndEmit: diffAndEmit,
         test: test,
         history: () => history.slice(),
         buildPayload: buildPayload,
+        splitBatches: splitBatches,
         resetSnapshot: () => { snapshot = null; snapshotDone = null; snapshotArchived = null; }
     };
 }
@@ -774,6 +956,9 @@ module.exports = {
     SOURCES,
     parseSchema,
     guessSource,
+    pickOptions,
+    coerceSelectText,
+    maskWebhookUrl,
     taskFields,
     fingerprint,
     formatTime

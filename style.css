@@ -90,13 +90,123 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 12px;
             padding: 15px;
-            width: 360px;
-            max-height: 80vh;
-            overflow-y: auto;
+            /* 【2026-09-30】分栏改造：由「一长条竖排」改为一页一个分类。
+               面板本身不再滚动，改成 Tab 栏固定 + 下面板内部滚动。宽度也从 360 提到 420。 */
+            width: 420px;
+            max-height: 82vh;
+            overflow: hidden;
             display: none;
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
             /* 移除毛玻璃，消灭透明窗口下的闪烁 Bug */
             transform: translateZ(0);
+        }
+
+        /* ---------- 设置分栏（Tab） ---------- */
+        .settings-tabs {
+            display: flex;
+            gap: 4px;
+            overflow-x: auto;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            scrollbar-width: none;
+            flex: 0 0 auto;
+        }
+
+        .settings-tabs::-webkit-scrollbar {
+            height: 0;
+        }
+
+        .settings-tab {
+            flex: 0 0 auto;
+            padding: 6px 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            color: #bbb;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+
+        .settings-tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .settings-tab.active {
+            background: rgba(0, 161, 214, 0.22);
+            border-color: rgba(0, 161, 214, 0.55);
+            color: #7fdfff;
+            font-weight: 600;
+        }
+
+        /* 分页面板：容器自己滚动，Tab 栏不动 */
+        .settings-panes {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+
+        .settings-panes::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .settings-panes::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        .settings-pane {
+            display: none;
+        }
+
+        .settings-pane.active {
+            display: block;
+        }
+
+        /* 分栏里的说明文字与操作按钮（数据与备份 / 关于） */
+        .settings-hint {
+            font-size: 12px;
+            color: #888;
+            line-height: 1.7;
+            margin: 4px 0 6px;
+        }
+
+        .settings-btn-block {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: #ddd;
+        }
+
+        .settings-btn-block:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+
+        .settings-btn-block.ok {
+            background: rgba(76, 175, 80, 0.18);
+            border-color: rgba(76, 175, 80, 0.45);
+            color: #a5d6a7;
+        }
+
+        .settings-btn-block.info {
+            background: rgba(33, 150, 243, 0.18);
+            border-color: rgba(33, 150, 243, 0.45);
+            color: #90caf9;
+        }
+
+        .settings-btn-block.danger {
+            background: rgba(244, 67, 54, 0.16);
+            border-color: rgba(244, 67, 54, 0.45);
+            color: #ef9a9a;
         }
 
         .settings-panel::-webkit-scrollbar {
@@ -118,7 +228,8 @@
         }
 
         .settings-panel.show {
-            display: block;
+            display: flex;
+            flex-direction: column;
         }
 
         .settings-panel h4 {
@@ -1161,7 +1272,24 @@
         .table-view-container {
             display: none;
             margin-top: 20px;
+            /* 【2026-09-30】窗口太窄、列已经到各自下限时走横向滚动，
+               而不是把「任务内容」压到不可读、把日期拆成碎片 */
             overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        }
+
+        .table-view-container::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .table-view-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.22);
+            border-radius: 4px;
+        }
+
+        .table-view-container::-webkit-scrollbar-track {
+            background: transparent;
         }
 
         .table-view-container.active {
@@ -1179,9 +1307,18 @@
 
         .task-table th,
         .task-table td {
-            padding: 14px 18px;
+            /* 【2026-09-30】内边距从 14×18 收到 13×14：窄窗口下每列省 8px，
+               7 列合计约 56px，减少"必须横向滚动"的概率 */
+            padding: 13px 14px;
             text-align: left;
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* 操作列（评论/完成/删除三个按钮）按内容收缩，不参与压缩也不浪费空白 */
+        .task-table th:nth-child(7),
+        .task-table td:nth-child(7) {
+            width: 1%;
+            white-space: nowrap;
         }
 
         .task-table th:nth-child(3),
@@ -1218,10 +1355,31 @@
         }
 
         .table-content {
-            max-width: 220px;
-            word-break: break-all;
+            /* 【2026-09-30 修复】原来写死 max-width: 220px（渲染时内联又限了 350px），
+               结果调「整体界面宽度」时表格视图里的文字永远在 220px 处换行 —— 用户困惑的根因。
+               现在跟随列宽：任务内容列吃掉剩余宽度，界面拉宽文字就跟着变宽。 */
+            max-width: 100%;
+            /* 太窄时给这一列一个下限：低于它就让表格横向滚动（.table-view-container 已有 overflow-x），
+               而不是把所有列一起压碎 */
+            min-width: 200px;
+            /* 英文长词/长链接仍然不撑破单元格，但不再像 break-all 那样把单词拦腰截断 */
+            overflow-wrap: break-word;
+            word-break: normal;
             white-space: normal;
             line-height: 1.5;
+        }
+
+        /* 【2026-09-30】表格视图的日期列：日期与时间各自不可断行，只在两者之间换行。
+           之前 "2026-09-29 18:45:31" 会从连字符处被拆成 "2026-09-" / "29" / "18:45:31"（看着像错位）。 */
+        .task-table .dt-date,
+        .task-table .dt-time {
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* 表头也统一不换行，避免「创建时间」被拆成两行 */
+        .task-table th {
+            white-space: nowrap;
         }
 
         .view-toggle-btn {

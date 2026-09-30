@@ -7,7 +7,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:dir": "electron-builder --dir",
+    "deploy:local": "node scripts/deploy-local.js"
   },
   "build": {
     "appId": "com.example.timer",
@@ -39,9 +41,18 @@
       "allowToChangeInstallationDirectory": true
     },
     "extraResources": [
-      { "from": "timer-cli.js", "to": "timer-cli.js" },
-      { "from": "timer-cli.py", "to": "timer-cli.py" },
-      { "from": "timer.cmd", "to": "timer.cmd" }
+      {
+        "from": "timer-cli.js",
+        "to": "timer-cli.js"
+      },
+      {
+        "from": "timer-cli.py",
+        "to": "timer-cli.py"
+      },
+      {
+        "from": "timer.cmd",
+        "to": "timer.cmd"
+      }
     ],
     "directories": {
       "output": "dist"
@@ -50,5 +61,8 @@
   "devDependencies": {
     "electron": "^28.3.3",
     "electron-builder": "^24.9.1"
+  },
+  "allowScripts": {
+    "electron@28.3.3": true
   }
 }

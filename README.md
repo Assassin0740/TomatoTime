@@ -41,20 +41,44 @@
 - 置顶显示倒计时，可锁定位置
 - 可显示当前任务与图片缩略图
 
+### 🌐 网页版（`web/`，零安装）
+- 同一套番茄钟 + 任务管理，手机/平板/别人电脑打开网址就能用
+- 数据**只存在用户自己的浏览器里**（任务/图片 → IndexedDB，设置 → localStorage），不联网不上传
+- 支持 PWA：可"安装"到桌面/主屏，断网也能打开；可申请「持久化存储」降低被清理风险
+- 导出/导入 JSON 备份，**也能导入桌面版导出的备份**
+- 本地预览：`python -m http.server 8899 --directory web` → http://127.0.0.1:8899/
+- 详见 [`项目文档/13-网页版.md`](项目文档/13-网页版.md)
+
 ### ⚙️ 个性化设置
 - 背景明暗、音量、字体大小（完整/纯净模式）
 - 发光效果（开关/颜色/强度）、呼吸效果
 - 自定义背景图片、纯净模式
+- 整体界面宽度滑块（800–1800px）、**日期是否显示年份**（关掉只显示 `09-30 18:45:31`，窄窗口下更省地方）
 - 开机自启、全局快捷键开关
 
 ## 🚀 快速开始
 
 ```bash
-npm install      # 安装依赖
-npm start        # 开发模式运行
-npm test         # 运行测试（API / WebHook / 数据层）
-npm run build    # 打包，产物在 dist/
+npm install           # 安装依赖
+npm start             # 开发模式运行
+npm test              # 运行测试（API / WebHook / 数据层）
+npm run build         # 打完整安装包（NSIS），产物在 dist/
+npm run build:dir     # 只打免安装目录版（快，产物 dist/win-unpacked/）
+npm run deploy:local  # 构建并就地部署到本机安装目录（详见下方）
 ```
+
+### 🔁 改完源码怎么让"本机在用的那份"生效
+
+| 场景 | 做法 |
+|---|---|
+| 开发时自己试 | `npm start` —— 直接跑源码，改完重启即生效 |
+| 验证构建产物 | `npm run build:dir` → 双击 `dist\win-unpacked\计时器.exe` |
+| 让**安装版**也用上新代码 | `npm run deploy:local`（= 构建 + 备份 + 覆盖安装目录里的 `app.asar` 与 CLI） |
+| 发给别人 / 正式发版 | `npm run build` 出安装包，别人安装即可 |
+
+> `deploy:local` 默认部署到 `D:\Program\timer-app`（可用 `-- --to "其他目录"` 或环境变量 `TIMER_INSTALL_DIR` 改）。
+> **执行前必须先退出「计时器」**，否则 `app.asar` 被占用；它会自动备份成 `app.asar.bak-<时间戳>`，回滚就是改回文件名。
+> 更多参数：`npm run deploy:local -- --help`。
 
 ## 📖 使用说明
 

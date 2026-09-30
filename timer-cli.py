@@ -258,7 +258,7 @@ def cmd_list(args):
 
 
 def cmd_get(args):
-    data = need_ok(args, call(args, 'GET', '/api/tasks/%d' % args.id), '查询任务')
+    data = need_ok(args, call(args, 'GET', task_path(args.id)), '查询任务')
     t = data.get('task', {})
     print_task(t)
     comments = t.get('comments') or []
@@ -290,25 +290,30 @@ def cmd_update(args):
         body['images'] = [{'path': i} if os.path.isfile(i) else {'url': i} for i in args.image]
     if not body:
         fail('没有要修改的内容（用 --content / --append / --priority / --type / --remind / --image）')
-    data = need_ok(args, call(args, 'PATCH', '/api/tasks/%d' % args.id, body), '修改任务')
+    data = need_ok(args, call(args, 'PATCH', task_path(args.id), body), '修改任务')
     print('已更新：')
     print_task(data.get('task', {}), prefix='  ')
 
 
+def task_path(tid):
+    """任务 ID 路径：ID 在多数 shell 里传进来是字符串，用 %d 格式化会 TypeError（2026-09-30 修复）"""
+    return '/api/tasks/%s' % str(tid).strip()
+
+
 def cmd_done(args):
     for tid in args.ids:
-        data = need_ok(args, call(args, 'PATCH', '/api/tasks/%d' % tid, {'done': not args.undone}), '完成任务')
+        data = need_ok(args, call(args, 'PATCH', task_path(tid), {'done': not args.undone}), '完成任务')
         print('%s #%s' % ('已标记未完成' if args.undone else '已完成', data.get('task', {}).get('id', tid)))
 
 
 def cmd_delete(args):
     for tid in args.ids:
-        need_ok(args, call(args, 'DELETE', '/api/tasks/%d' % tid), '删除任务')
+        need_ok(args, call(args, 'DELETE', task_path(tid)), '删除任务')
         print('已删除 #%s' % tid)
 
 
 def cmd_comment(args):
-    data = need_ok(args, call(args, 'POST', '/api/tasks/%d/comments' % args.id, {'text': args.text}), '添加评论')
+    data = need_ok(args, call(args, 'POST', task_path(args.id) + '/comments', {'text': args.text}), '添加评论')
     print('已评论 #%s，现有 %d 条评论' % (args.id, len(data.get('task', {}).get('comments') or [])))
 
 
@@ -360,14 +365,47 @@ def cmd_clipboard(args):
         print('图片已写入系统剪贴板（可直接到微信里 Ctrl+V）')
 
 
+def _kv_pairs(items, what):
+    """把 ['fA=content', 'fB=高优'] 解析成字典；格式不对直接报错"""
+    out = {}
+    for item in items or []:
+        if '=' not in item:
+            fail('%s 的格式应为 字段ID=值，收到：%s' % (what, item))
+        key, value = item.split('=', 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _read_schema_text(args):
+    if getattr(args, 'schema_json', None):
+        return args.schema_json
+    if getattr(args, 'schema_file', None):
+        with open(args.schema_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    return ''
+
+
 def cmd_webhook(args):
-    if args.action == 'info':
+    if args.action in ('info', 'config'):
         data = need_ok(args, call(args, 'GET', '/api/webhook'), '读取 WebHook')
         w = data.get('webhook', {})
+        if args.json:
+            print(json.dumps(w, ensure_ascii=False, indent=2))
+            return
         print('WebHook：%s · 模式 %s' % ('启用' if w.get('enabled') else '关闭', w.get('mode')))
         print('地址：%s' % w.get('url', '(未填写)'))
         for e, on in (w.get('events') or {}).items():
             print('  事件 %-10s %s' % (e, '✓' if on else '✗'))
+        fields = w.get('schemaFields') or []
+        mapping = w.get('mapping') or {}
+        constants = w.get('constants') or {}
+        print('字段：%d 列 · 已映射 %d 列 · record_id 缓存 %d 条' % (len(fields), len(mapping), w.get('recordCount') or 0))
+        for f in fields:
+            src = mapping.get(f.get('id')) or '（不写入）'
+            extra = (' = ' + constants.get(f.get('id'), '')) if src == 'const' else ''
+            if f.get('enum'):
+                extra += '  [选项: %s]' % '/'.join(f['enum'])
+            print('  %-10s %-16s → %s%s' % (f.get('id'), f.get('name'), src, extra))
         hist = w.get('history') or []
         print('最近 %d 条推送：' % len(hist))
         for h in hist[:5]:
@@ -375,6 +413,8 @@ def cmd_webhook(args):
             print('  %s %s %s' % ('✓' if h.get('ok') else '✗', h.get('action'), mark if not h.get('ok') else ''))
     elif args.action == 'push':
         body = {'action': args.event}
+        if getattr(args, 'force', False):
+            body['force'] = True
         if args.ids:
             body['ids'] = split_ids(args.ids)
         elif args.all:
@@ -382,8 +422,80 @@ def cmd_webhook(args):
             body['ids'] = [t.get('id') for t in listing.get('tasks', [])]
         else:
             fail('用 --ids 1,2 指定任务，或 --all 推送全部活跃任务')
-        need_ok(args, call(args, 'POST', '/api/webhook', body), '推送到表格')
-        print('已触发推送到表格：%s' % body['action'])
+        data = need_ok(args, call(args, 'POST', '/api/webhook', body), '推送到表格')
+        result = data.get('result') or {}
+        if data.get('ok'):
+            print('已推送 %d 条到表格 ✓' % (data.get('count') or 0))
+        else:
+            print('推送失败（%d 条）：%s' % (data.get('count') or 0, result.get('error') or result.get('status') or '未知原因'))
+    elif args.action == 'set':
+        patch = {}
+        if getattr(args, 'enable', False):
+            patch['enabled'] = True
+        if getattr(args, 'disable', False):
+            patch['enabled'] = False
+        if getattr(args, 'url', None):
+            patch['url'] = args.url
+        text = _read_schema_text(args)
+        if text:
+            patch['schemaJson'] = text
+        if getattr(args, 'json_file', None):
+            with open(args.json_file, 'r', encoding='utf-8') as f:
+                patch.update(json.load(f))
+        mapping = _kv_pairs(getattr(args, 'map', None), '--map')
+        if mapping:
+            patch['mapping'] = mapping
+        constants = _kv_pairs(getattr(args, 'const', None), '--const')
+        if constants:
+            patch['constants'] = constants
+        if getattr(args, 'record_ids_file', None):
+            with open(args.record_ids_file, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+            ids = {}
+            if isinstance(raw, dict):
+                ids = {str(k): str(v) for k, v in raw.items()}
+            elif isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict) and item.get('taskId') is not None:
+                        ids[str(item['taskId'])] = str(item.get('recordId') or '')
+            ids = {k: v for k, v in ids.items() if v}
+            if ids:
+                patch['recordIds'] = ids
+        if not patch:
+            fail('没有要改的内容（--enable/--disable/--url/--schema-file/--map/--const/--json-file/--record-ids-file）')
+        data = need_ok(args, call(args, 'POST', '/api/webhook', {'action': 'config', 'config': patch}), '更新 WebHook 配置')
+        w = data.get('webhook', {})
+        if args.json:
+            print(json.dumps(w, ensure_ascii=False, indent=2))
+            return
+        print('已更新：%s · 字段 %d 列 · 映射 %d 列 · 固定文本 %d 项 · record_id %d 条' % (
+            '启用' if w.get('enabled') else '关闭', len(w.get('schemaFields') or []),
+            len(w.get('mapping') or {}), len(w.get('constants') or {}), w.get('recordCount') or 0))
+    elif args.action == 'parse':
+        text = _read_schema_text(args)
+        if not text:
+            fail('用 --schema-file 或 --schema-json 提供「接收外部数据」页面的示例 JSON')
+        data = need_ok(args, call(args, 'POST', '/api/webhook', {'action': 'parse', 'schemaJson': text}), '解析示例 JSON')
+        fields = data.get('fields') or []
+        if args.json:
+            print(json.dumps(fields, ensure_ascii=False, indent=2))
+            return
+        print('解析到 %d 列：' % len(fields))
+        for f in fields:
+            enum = ('  选项: ' + '/'.join(f['enum'])) if f.get('enum') else ''
+            print('  %-10s %-16s %-14s%s' % (f.get('id'), f.get('name'), f.get('type'), enum))
+    elif args.action == 'test':
+        data = need_ok(args, call(args, 'POST', '/api/webhook', {'action': 'test'}), '发送测试')
+        result = data.get('result') or {}
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if data.get('ok'):
+            print('测试推送成功 ✓（表格里应出现一条测试记录）')
+        else:
+            print('测试推送失败：%s' % (result.get('error') or result.get('body') or result.get('status') or '未知原因'))
+            if result.get('payload'):
+                print('载荷预览：%s' % json.dumps(result['payload'], ensure_ascii=False)[:400])
 
 
 def cmd_settings(args):
@@ -479,11 +591,24 @@ def build_parser():
     p.add_argument('--url', help='set：图片链接')
     p.add_argument('--save', help='get：保存到该 png 路径')
 
-    p = sub.add_parser('webhook', help='查看 / 触发表格同步')
-    p.add_argument('action', choices=['info', 'push'])
+    p = sub.add_parser('webhook', help='查看 / 配置 / 触发表格同步')
+    p.add_argument('action', choices=['info', 'push', 'config', 'set', 'parse', 'test'])
     p.add_argument('--event', default='created', help='push 的事件名：created/completed/updated/archived/deleted')
     p.add_argument('--ids', help='push 的任务 ID，逗号分隔')
     p.add_argument('--all', action='store_true', help='push 全部活跃任务')
+    p.add_argument('--force', action='store_true', help='push：忽略「启用同步」开关（关闭状态下也推）')
+    # —— config / set / parse（2026-09-30 增加）——
+    p.add_argument('--enable', action='store_true', help='set：开启同步')
+    p.add_argument('--disable', action='store_true', help='set：关闭同步')
+    p.add_argument('--url', help='set：WebHook 地址')
+    p.add_argument('--schema-json', help='set/parse：示例 JSON 原文')
+    p.add_argument('--schema-file', help='set/parse：示例 JSON 文件路径')
+    p.add_argument('--map', action='append', metavar='字段ID=来源',
+                   help='set：字段映射，可重复，如 --map fqmfGP=content --map f04uVx=priority')
+    p.add_argument('--const', action='append', metavar='字段ID=文本',
+                   help='set：固定文本列，可重复，如 --const f8o4LT=拯救小猫')
+    p.add_argument('--record-ids-file', help='set：record_id 回填文件（JSON：{任务ID: record_id} 或 [{taskId, recordId}]）')
+    p.add_argument('--json-file', help='set：直接给配置片段 JSON 文件（与其它参数合并，后写的优先）')
 
     p = sub.add_parser('settings', help='读写应用设置')
     p.add_argument('key', nargs='?')

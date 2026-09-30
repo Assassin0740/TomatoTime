@@ -15,8 +15,24 @@
     <button class="settings-btn" id="settingsBtn">⚙</button>
 
     <div class="settings-panel" id="settingsPanel">
+
+        <!-- 【2026-09-30】设置分栏：一页一个分类（原来是一长条竖排，找东西要滚很久） -->
+        <div class="settings-tabs" id="settingsTabs" role="tablist">
+            <button class="settings-tab active" data-tab="appearance">外观显示</button>
+            <button class="settings-tab" data-tab="timer">计时与提醒</button>
+            <button class="settings-tab" data-tab="float">悬浮窗</button>
+            <button class="settings-tab" data-tab="ai">AI 接入</button>
+            <button class="settings-tab" data-tab="webhook">表格同步</button>
+            <button class="settings-tab" data-tab="data">数据与备份</button>
+            <button class="settings-tab" data-tab="about">关于</button>
+        </div>
+
+        <div class="settings-panes" id="settingsPanes">
+
+        <!-- ==================== 外观显示 ==================== -->
+        <div class="settings-pane active" data-pane="appearance">
         <div class="settings-section">
-            <h4>基础设置</h4>
+            <h4>界面与文字</h4>
             <div class="settings-row">
                 <label>背景明暗</label>
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -24,13 +40,7 @@
                     <span id="darknessValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">70%</span>
                 </div>
             </div>
-            <div class="settings-row">
-                <label>音量大小</label>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <input type="range" id="volumeSlider" min="0" max="300" value="100">
-                    <span id="volumeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
-                </div>
-            </div>
+            <!-- 音量挪到「计时与提醒」页（属于声音，不属于界面） -->
             <div class="settings-row">
                 <label>完整文字大小</label>
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -73,6 +83,14 @@
                     <span id="containerWidthValue" style="font-size: 12px; color: #888; width: 50px; text-align: right;">1000px</span>
                 </div>
             </div>
+            <!-- 【2026-09-30】日期是否带年份：表格/卡片/提醒徽标统一生效，关掉能省 5 个字符宽度 -->
+            <div class="settings-row">
+                <label>日期显示年份</label>
+                <label class="toggle-switch" title="关掉后只显示「09-30 18:45:31」，窄窗口下更省地方">
+                    <input type="checkbox" id="showYearToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </div>
 
         <div class="settings-section">
@@ -105,8 +123,33 @@
             </div>
         </div>
 
+        <!-- 背景图（原「选择背景」折叠块，归到外观显示页） -->
         <div class="settings-section">
-            <h4>计时设置</h4>
+            <div class="collapsible-header" onclick="toggleCollapsible('bgSelector')">
+                <h4 style="display: inline;">选择背景</h4>
+                <span id="bgSelectorArrow">▼</span>
+            </div>
+            <div id="bgSelectorContainer" class="collapsible-content">
+                <div class="bg-selector" id="bgSelector"></div>
+                <button id="importBgBtn" style="margin-top: 10px; padding: 8px 16px; background: rgba(76, 175, 80, 0.2); border: 1px solid rgba(76, 175, 80, 0.5); color: #81c784; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">导入背景图片</button>
+            </div>
+        </div>
+        </div><!-- /外观显示 -->
+
+        <!-- ==================== 计时与提醒 ==================== -->
+        <div class="settings-pane" data-pane="timer">
+            <div class="settings-section">
+                <h4>声音</h4>
+                <div class="settings-row">
+                    <label>音量大小</label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="range" id="volumeSlider" min="0" max="300" value="100">
+                        <span id="volumeValue" style="font-size: 12px; color: #888; width: 40px; text-align: right;">100%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-section">
+                <h4>计时行为</h4>
             <div class="settings-row">
                 <label>自动开始下一阶段</label>
                 <label class="toggle-switch">
@@ -119,8 +162,12 @@
             </div>
         </div>
 
+        </div><!-- /计时与提醒 -->
+
+        <!-- ==================== 悬浮窗 ==================== -->
+        <div class="settings-pane" data-pane="float">
         <div class="settings-section">
-            <h4>悬浮窗设置</h4>
+            <h4>悬浮窗</h4>
             <div class="settings-row">
                 <label>悬浮窗显示任务</label>
                 <label class="toggle-switch">
@@ -157,8 +204,12 @@
             </div>
         </div>
 
+        </div><!-- /悬浮窗 -->
+
+        <!-- ==================== AI 接入 ==================== -->
+        <div class="settings-pane" data-pane="ai">
         <div class="settings-section">
-            <h4>🤖 AI 接入 · 系统集成</h4>
+            <h4>🤖 AI 接口（本地）</h4>
             <div class="settings-row">
                 <label>AI 接口（本地）</label>
                 <label class="toggle-switch">
@@ -179,6 +230,9 @@
                     <button id="apiTokenRegen" title="重新生成令牌" style="padding: 5px 8px; background: rgba(255,255,255,0.08); border: 1px solid #555; color: #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;">↻</button>
                 </div>
             </div>
+            </div>
+            <div class="settings-section">
+                <h4>系统集成</h4>
             <div class="settings-row">
                 <label>开机自启</label>
                 <label class="toggle-switch">
@@ -207,6 +261,10 @@
             <button id="apiCopyExample" style="padding: 8px 12px; background: rgba(33, 150, 243, 0.18); border: 1px solid rgba(33, 150, 243, 0.45); color: #90caf9; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">复制调用示例（给 AI / 脚本）</button>
         </div>
 
+        </div><!-- /AI 接入 -->
+
+        <!-- ==================== 表格同步 ==================== -->
+        <div class="settings-pane" data-pane="webhook">
         <div class="settings-section">
             <h4>🔗 WebHook · 同步到表格</h4>
             <div class="settings-row">
@@ -273,16 +331,39 @@
             <div id="webhookLog" style="font-size: 12px; color: #888; line-height: 1.6; max-height: 150px; overflow-y: auto; word-break: break-all;"></div>
         </div>
 
-        <div class="settings-section">
-            <div class="collapsible-header" onclick="toggleCollapsible('bgSelector')">
-                <h4 style="display: inline;">选择背景</h4>
-                <span id="bgSelectorArrow">▼</span>
+        </div><!-- /表格同步 -->
+
+        <!-- ==================== 数据与备份 ==================== -->
+        <div class="settings-pane" data-pane="data">
+            <div class="settings-section">
+                <h4>本地数据</h4>
+                <div id="dataStats" class="settings-hint">正在统计…</div>
+                <button id="exportDataBtn" class="settings-btn-block info">导出全部数据（JSON）</button>
+                <button id="importDataBtn" class="settings-btn-block ok">导入数据（JSON）</button>
+                <input type="file" id="importDataFile" accept=".json,application/json" style="display: none;">
+                <button id="clearLocalDataBtn" class="settings-btn-block danger">清空本地缓存（危险）</button>
+                <div class="settings-hint">
+                    数据默认存在你自己电脑上：桌面版在 <code>%APPDATA%\计时器</code>，
+                    网页版在浏览器 IndexedDB（换浏览器/清浏览数据会丢，记得定期导出）。
+                </div>
             </div>
-            <div id="bgSelectorContainer" class="collapsible-content">
-                <div class="bg-selector" id="bgSelector"></div>
-                <button id="importBgBtn" style="margin-top: 10px; padding: 8px 16px; background: rgba(76, 175, 80, 0.2); border: 1px solid rgba(76, 175, 80, 0.5); color: #81c784; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;">导入背景图片</button>
+        </div><!-- /数据与备份 -->
+
+        <!-- ==================== 关于 ==================== -->
+        <div class="settings-pane" data-pane="about">
+            <div class="settings-section">
+                <h4>关于</h4>
+                <div class="settings-hint" id="aboutVersion">版本读取中…</div>
+                <div class="settings-hint">
+                    <b>快捷键</b>：Ctrl+Alt+Space 开始/暂停 · Ctrl+Alt+M 切换模式 · Ctrl+Alt+F 悬浮窗 · Ctrl+Alt+N 快速记录
+                </div>
+                <div class="settings-hint">
+                    AI 接口自描述：<code>GET /api/schema</code> ｜ 命令行：<code>timer status</code>
+                </div>
             </div>
-        </div>
+        </div><!-- /关于 -->
+
+        </div><!-- /settings-panes -->
         <input type="file" id="bgFileInput" accept="image/*" style="display: none;">
     </div>
 

@@ -1709,16 +1709,14 @@ const api = createApiServer({
     toggleFloat: () => toggleFloatWindow(),
     isFloatOpen: () => !!(floatWindow && !floatWindow.isDestroyed()),
     webhook: {
-        info: () => ({
-            enabled: !!mainSettings.webhook.enabled,
-            url: maskWebhookUrl(mainSettings.webhook.url),
-            mode: mainSettings.webhook.mode,
-            events: mainSettings.webhook.events,
-            fields: mainSettings.webhook.schemaFields,
-            recordCount: Object.keys(mainSettings.webhook.recordIds || {}).length,
-            history: webhook.history()
-        }),
-        push: (action, tasks) => webhook.push(action, tasks)
+        // 【2026-09-30】info 改为返回完整配置快照（含 schemaFields+enum / mapping / constants），
+        // 这样 AI 或脚本能通过 API 读懂当前映射，不必再去设置面板里看。
+        info: () => webhook.info(),
+        // 允许通过 API 改配置（地址/开关/事件/映射/固定文本/record_id 回填）
+        setConfig: patch => webhook.updateConfig(patch || {}),
+        parse: text => webhook.parseSchema(text),
+        test: () => webhook.test(),
+        push: (action, tasks, opts) => webhook.push(action, tasks, opts)
     }
 });
 
@@ -1834,6 +1832,9 @@ ipcMain.handle('main-settings:set', (event, patch) => {
         loginItem: safeGetLoginItemSettings()
     };
 });
+
+// 【2026-09-30】设置面板「关于」页要显示版本号：渲染进程无法直接读 package.json
+ipcMain.handle('app:version', () => app.getVersion());
 
 ipcMain.handle('api:regenerate-token', () => {
     mainSettings.api.token = crypto.randomBytes(12).toString('hex');

@@ -48,7 +48,16 @@ notify <标题> [内容]              弹系统通知
 window <show|hide|float>          主窗口 / 悬浮窗
 clipboard <get|set> [--path 路径 | --url 链接] [--save 路径]
                                   读写剪贴板图片（微信互通）
-webhook <info|push> [--event 事件] [--ids 1,2 | --all]
+webhook <info|config|push|set|parse|test>
+    info|config                   看完整配置（字段 + 选项 + 映射 + 固定文本 + 最近推送）
+    push [--event 事件] [--ids 1,2 | --all] [--force]
+                                  推送任务（--force 忽略「启用同步」开关）
+    set [--enable|--disable] [--url 地址] [--schema-file 示例JSON | --schema-json 原文]
+        [--map 字段ID=来源]... [--const 字段ID=固定文本]...
+        [--record-ids-file 回填.json] [--json-file 配置片段.json]
+                                  改 WebHook 配置（2026-09-30 新增）
+    parse --schema-file 示例JSON   只解析示例 JSON，不保存
+    test                          发一条测试记录到表格
 settings [key] [value]            读写应用设置
 schema                            打印 HTTP API 自描述
 ```

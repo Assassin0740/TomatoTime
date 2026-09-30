@@ -1,0 +1,15 @@
+{
+  "name": "专注计时器 · 网页版",
+  "short_name": "计时器",
+  "description": "番茄钟 + 任务管理，数据保存在本机浏览器（IndexedDB），不联网不上传",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

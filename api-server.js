@@ -315,8 +315,8 @@ function createApiServer(hooks) {
                 { method: 'POST', path: '/api/settings', desc: '写入设置 {key,value}' },
                 { method: 'POST', path: '/api/notify', desc: '弹一条系统通知 {title,body}' },
                 { method: 'POST', path: '/api/window', desc: '{action:show|hide|float}' },
-                { method: 'GET', path: '/api/webhook', desc: '查看 WebHook 配置与最近推送记录' },
-                { method: 'POST', path: '/api/webhook', desc: '立刻推送任务到表格 {action, ids|tasks}' }
+                { method: 'GET', path: '/api/webhook', desc: '查看 WebHook 完整配置（字段+选项+映射+固定文本）与最近推送记录' },
+                { method: 'POST', path: '/api/webhook', desc: '推送 {action:"created", ids|tasks, force}；改配置 {action:"config", config}；只解析 {action:"parse", schemaJson}；发测试 {action:"test"}' }
             ],
             taskExample: {
                 content: '完成季度总结（支持多行\\n第二行）',
@@ -409,20 +409,59 @@ function createApiServer(hooks) {
             return { ok: true, webhook: info };
         },
 
+        /**
+         * 【2026-09-30 增加】WebHook 一个端点干四件事，靠 action 区分：
+         *   push   （默认）推送任务：{action:'created', ids:[...] | tasks:[...], force?}
+         *   config 改配置：{action:'config', config:{ enabled/url/mode/events/mapping/constants/recordIds/schemaJson/parseSchemaOnly }}
+         *   parse  只解析示例 JSON 不保存：{action:'parse', schemaJson}
+         *   test   发一条测试记录：{action:'test'}
+         * config / parse 是为了让 AI 与脚本能远程把映射配好（此前只能人点设置面板）。
+         */
         'POST /api/webhook': async (req, url, body) => {
             if (!hooks.webhook) return { ok: false, error: 'WebHook 未启用' };
             const action = String((body && body.action) || 'created').toLowerCase();
+            const b = body || {};
+
+            if (action === 'config' || action === 'set' || action === 'update') {
+                const patch = b.config || b.patch || b.data;
+                if (!patch || typeof patch !== 'object') {
+                    return { ok: false, error: '缺少 config（要改的配置片段）' };
+                }
+                hooks.webhook.setConfig(patch);
+                return { ok: true, action: 'config', webhook: hooks.webhook.info() };
+            }
+
+            if (action === 'parse') {
+                const text = String(b.schemaJson || b.schema || '');
+                if (!text.trim()) return { ok: false, error: '缺少 schemaJson（示例 JSON 原文）' };
+                const fields = hooks.webhook.parse(text);
+                if (!fields.length) return { ok: false, error: '没解析出字段，确认粘的是示例 JSON' };
+                return { ok: true, action: 'parse', count: fields.length, fields: fields };
+            }
+
+            if (action === 'test') {
+                const result = await hooks.webhook.test();
+                return { ok: !!result.ok, action: 'test', result: result };
+            }
+
             // 指定 id 时先查任务，否则直接推送 body 里带的 tasks
-            let tasks = (body && body.tasks) || [];
-            if (body && body.ids && Array.isArray(body.ids) && body.ids.length) {
-                for (const id of body.ids) {
+            let tasks = b.tasks || [];
+            if (b.ids && Array.isArray(b.ids) && b.ids.length) {
+                for (const id of b.ids) {
                     const t = await hooks.invokeRenderer('get', { id: parseInt(id, 10) });
                     if (t) tasks.push(t);
                 }
             }
             if (!tasks.length) return { ok: false, error: '没有可推送的任务（给 tasks 或 ids）' };
-            await hooks.webhook.push(action, tasks);
-            return { ok: true, action: action, count: tasks.length };
+            await hooks.webhook.push(action, tasks, b.force ? { force: true } : undefined);
+            const info = hooks.webhook.info();
+            const last = info.history && info.history[0];
+            return {
+                ok: !last || !!last.ok,
+                action: action,
+                count: tasks.length,
+                result: last || null
+            };
         }
     };
 

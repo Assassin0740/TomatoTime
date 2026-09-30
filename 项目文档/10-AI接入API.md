@@ -61,8 +61,8 @@ Authorization: Bearer <token>
 | POST | `/api/settings` | 写设置 `{ key, value }` 或 `{ settings: {...} }` |
 | POST | `/api/notify` | 弹系统通知 `{ title, body }` |
 | POST | `/api/window` | `{ action: show\|hide\|float }` |
-| GET | `/api/webhook` | 查看 WebHook 配置与最近推送记录 |
-| POST | `/api/webhook` | 立刻推送任务到表格 `{ action, ids \| tasks }` |
+| GET | `/api/webhook` | 查看 WebHook **完整配置**（字段 + 选项 + 映射 + 固定文本）与最近推送记录 |
+| POST | `/api/webhook` | 四合一：推送 / 改配置 / 解析示例 JSON / 发测试（见第 8 节） |
 
 统一返回 JSON：`{ "ok": true, ... }`；失败为 `{ "ok": false, "error": "..." }` 并带相应状态码
 （401 令牌无效 / 404 接口不存在 / 400 请求体异常 / 500 处理异常）。已开启 CORS，浏览器里的工具也能直连。
@@ -147,6 +147,59 @@ curl -X POST http://127.0.0.1:17890/api/webhook \
 ```
 
 配置与字段映射见 [`11-WebHook同步表格.md`](11-WebHook同步表格.md)。
+
+---
+
+## 8. WebHook 配置接口（2026-09-30 增加）
+
+`POST /api/webhook` 用一个端点干四件事，靠 `action` 区分：**配置不必再靠人点设置面板**。
+
+| action | 请求体 | 说明 |
+|---|---|---|
+| `created` / `completed` / `updated` / `archived` / `deleted`（默认 `created`） | `{ action, ids:[...] 或 tasks:[...], force:true }` | 推送任务；`force` 可忽略「启用同步」开关 |
+| `config` | `{ action:"config", config:{ enabled, url, events, schemaJson, mapping, constants, recordIds } }` | 改配置；`mapping` / `constants` / `recordIds` 都是**合并**而不是覆盖 |
+| `parse` | `{ action:"parse", schemaJson:"<示例 JSON 原文>" }` | 只解析不保存，返回 `fields:[{id,name,type,enum?}]` |
+| `test` | `{ action:"test" }` | 发一条测试记录到表格，返回 `result.payload` 便于核对 |
+
+`GET /api/webhook` 返回完整配置快照：`enabled / url(打码) / mode / events / schemaFieldCount /
+schemaFields(含 enum 选项) / mapping / constants / recordCount / sources / history`。
+
+典型用法（把一张表接进来，全程命令行）：
+
+```bash
+# 1) 看当前配置与最近推送结果
+curl -s http://127.0.0.1:17890/api/webhook -H "X-Api-Token: $TOKEN"
+
+# 2) 粘示例 JSON（来自企微表格「接收外部数据」页面），自动解析出字段 + 自动猜映射
+#    先把示例 JSON 存成文件，再用脚本包一层（示例见 11 号文档的 python/node 片段）
+python - <<'PY'
+import json, urllib.request
+schema = open('schema.json', encoding='utf-8').read()
+body = json.dumps({'action': 'config', 'config': {'enabled': True, 'schemaJson': schema}}).encode()
+req = urllib.request.Request('http://127.0.0.1:17890/api/webhook', data=body,
+                             headers={'Content-Type': 'application/json', 'X-Api-Token': '你的令牌'})
+print(json.load(urllib.request.urlopen(req))['ok'])
+PY
+
+# 3) 补上内部数据源里没有的列（固定文本）与字段映射
+curl -X POST http://127.0.0.1:17890/api/webhook -H "X-Api-Token: $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "action":"config",
+    "config":{
+      "mapping":  {"fqmfGP":"content","f04uVx":"priority","f92PwS":"status","f8o4LT":"const"},
+      "constants":{"f8o4LT":"拯救小猫"}
+    }}'
+
+# 4) 验证：发一条测试记录
+curl -X POST http://127.0.0.1:17890/api/webhook -H "X-Api-Token: $TOKEN" \
+  -H "Content-Type: application/json" -d '{"action":"test"}'
+```
+
+> `constants` 的用途：表格里有「所属项目 / 所属部门 / 风险评估」这类**内部没有的数据源**的列，
+> 把 `mapping[字段ID] = "const"` 再在 `constants[字段ID]` 填死文本即可（单选项会自动对齐预设值）。
+>
+> `recordIds: { "任务ID": "记录ID" }` 可以把**别处**（脚本直连企微 webhook）写进去的记录 ID 回填进来，
+> 之后该任务的「完成 / 修改」会走 `update_records` 更新同一行，而不是再加一行。
 
 ---
 

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0d1117">
+    <meta name="description" content="专注计时器（网页版）：番茄钟 + 任务管理，数据保存在你自己的电脑里">
+    <title>专注计时器 · 网页版</title>
+    <!-- 图标：不声明的话浏览器会去要 /favicon.ico 并报 404 -->
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ==================== 顶部栏 ==================== -->
+<header class="topbar">
+    <div class="topbar-inner">
+        <div class="brand">
+            <span class="brand-dot"></span>
+            <span>专注计时器</span>
+            <span class="brand-sub">网页版</span>
+        </div>
+        <div class="topbar-actions">
+            <button id="viewCardBtn" class="chip active" type="button">卡片</button>
+            <button id="viewTableBtn" class="chip" type="button">表格</button>
+            <button id="settingsBtn" class="chip chip-icon" type="button" title="设置">⚙</button>
+        </div>
+    </div>
+</header>
+
+<main class="container">
+
+    <!-- ==================== 计时器 ==================== -->
+    <section class="panel timer-panel">
+        <div class="timer-mode" id="modeText">工作时间</div>
+        <div class="timer-time" id="timeText">25:00</div>
+        <div class="timer-btns">
+            <button id="startBtn" class="btn btn-primary" type="button">开始</button>
+            <button id="resetBtn" class="btn" type="button">重置</button>
+            <button id="switchBtn" class="btn" type="button">切换模式</button>
+        </div>
+        <div class="timer-hint" id="timerHint">
+            时间到会弹系统通知；数据只保存在本机浏览器里
+        </div>
+    </section>
+
+    <!-- ==================== 新增任务 ==================== -->
+    <section class="panel">
+        <div class="row-between">
+            <h3 class="panel-title">添加任务</h3>
+            <label class="mini-toggle" title="长期任务会单独归到「长期」分类">
+                <input type="checkbox" id="newTaskLong"> 长期
+            </label>
+        </div>
+        <textarea id="input" class="input" rows="2" placeholder="写点什么…（Ctrl+V 可直接粘贴图片，Enter 换行，Ctrl+Enter 提交）"></textarea>
+        <div class="input-bar">
+            <div class="seg" id="prioritySeg">
+                <button class="seg-btn" data-p="3" type="button">高</button>
+                <button class="seg-btn active" data-p="2" type="button">中</button>
+                <button class="seg-btn" data-p="1" type="button">低</button>
+            </div>
+            <div class="input-bar-right">
+                <label class="mini-toggle" title="到点弹通知">
+                    <input type="checkbox" id="remindEnable"> 提醒
+                    <input type="datetime-local" id="remindAt" class="input-datetime">
+                </label>
+                <button id="addBtn" class="btn btn-primary" type="button">添加</button>
+            </div>
+        </div>
+        <div id="preview" class="preview"></div>
+    </section>
+
+    <!-- ==================== 搜索与筛选 ==================== -->
+    <section class="panel">
+        <div class="toolbar">
+            <input id="search" class="input input-search" placeholder="搜索任务内容 / 评论…">
+            <select id="filterStatus" class="select">
+                <option value="all">全部状态</option>
+                <option value="active">未完成</option>
+                <option value="done">已完成</option>
+            </select>
+            <select id="filterPriority" class="select">
+                <option value="all">全部优先级</option>
+                <option value="3">高</option>
+                <option value="2">中</option>
+                <option value="1">低</option>
+            </select>
+            <select id="sortBy" class="select">
+                <option value="time-desc">最新在前</option>
+                <option value="time-asc">最早在前</option>
+                <option value="priority">按优先级</option>
+                <option value="remind">按提醒时间</option>
+            </select>
+        </div>
+    </section>
+
+    <!-- ==================== 任务列表（卡片） ==================== -->
+    <section id="cardsView">
+        <div id="notesList"></div>
+        <div id="emptyHint" class="empty" hidden>暂无任务，上面添加一条试试</div>
+    </section>
+
+    <!-- ==================== 任务列表（表格） ==================== -->
+    <section id="tableView" class="table-wrap" hidden>
+        <table class="task-table">
+            <thead>
+                <tr>
+                    <th>任务内容</th>
+                    <th>优先级</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>完成时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </section>
+
+    <!-- ==================== 归档 ==================== -->
+    <section class="panel archive-panel">
+        <div class="row-between collapsible-head" id="archiveToggle">
+            <h3 class="panel-title">归档历史 <span id="archiveCount" class="muted">0</span></h3>
+            <span id="archiveArrow">▶</span>
+        </div>
+        <div id="archiveBody" hidden>
+            <div class="row-between archive-actions">
+                <button id="archiveDoneBtn" class="btn btn-small" type="button">把已完成任务归档</button>
+                <button id="archiveClearBtn" class="btn btn-small btn-danger" type="button">清空归档</button>
+            </div>
+            <div id="archiveList"></div>
+        </div>
+    </section>
+
+    <footer class="foot">
+        <span id="footStats" class="muted"></span>
+        <span class="muted">· 数据保存在本机（IndexedDB） · <span id="persistState"></span></span>
+    </footer>
+</main>
+
+<!-- ==================== 设置面板（分栏） ==================== -->
+<div class="settings-mask" id="settingsMask" hidden></div>
+<aside class="settings-panel" id="settingsPanel" hidden>
+    <div class="settings-head">
+        <strong>设置</strong>
+        <button id="settingsClose" class="chip chip-icon" type="button" title="关闭">✕</button>
+    </div>
+
+    <!-- 分栏：和桌面版保持同一套分类 -->
+    <nav class="settings-tabs" id="settingsTabs">
+        <button class="settings-tab active" data-tab="appearance" type="button">外观显示</button>
+        <button class="settings-tab" data-tab="timer" type="button">计时与提醒</button>
+        <button class="settings-tab" data-tab="task" type="button">任务与视图</button>
+        <button class="settings-tab" data-tab="data" type="button">数据与备份</button>
+        <button class="settings-tab" data-tab="about" type="button">关于</button>
+    </nav>
+
+    <div class="settings-panes" id="settingsPanes">
+
+        <!-- 外观显示 -->
+        <section class="settings-pane active" data-pane="appearance">
+            <div class="settings-section">
+                <h4>主题与文字</h4>
+                <div class="settings-row">
+                    <label>主题</label>
+                    <select id="set-theme" class="select">
+                        <option value="dark">深色</option>
+                        <option value="light">浅色</option>
+                    </select>
+                </div>
+                <div class="settings-row">
+                    <label>正文字号</label>
+                    <div class="range-wrap">
+                        <input type="range" id="set-fontSize" min="12" max="20" step="1" value="15">
+                        <span id="set-fontSizeValue" class="range-value">15px</span>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <label>界面宽度</label>
+                    <div class="range-wrap">
+                        <input type="range" id="set-containerWidth" min="700" max="1600" step="50" value="1000">
+                        <span id="set-containerWidthValue" class="range-value">1000px</span>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <label>日期显示年份</label>
+                    <label class="switch"><input type="checkbox" id="set-showYear" checked><span></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>时间格式（表格视图）</label>
+                    <select id="set-timeFormat" class="select">
+                        <option value="full">14:30:05</option>
+                        <option value="hm">14:30</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- 计时与提醒 -->
+        <section class="settings-pane" data-pane="timer">
+            <div class="settings-section">
+                <h4>时长</h4>
+                <div class="settings-row">
+                    <label>工作时长</label>
+                    <div class="range-wrap">
+                        <input type="range" id="set-work" min="1" max="120" step="1" value="25">
+                        <span id="set-workValue" class="range-value">25 分</span>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <label>休息时长</label>
+                    <div class="range-wrap">
+                        <input type="range" id="set-rest" min="1" max="60" step="1" value="5">
+                        <span id="set-restValue" class="range-value">5 分</span>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <label>自动开始下一阶段</label>
+                    <label class="switch"><input type="checkbox" id="set-autoNext"><span></span></label>
+                </div>
+            </div>
+            <div class="settings-section">
+                <h4>提醒与声音</h4>
+                <div class="settings-row">
+                    <label>到点提示音</label>
+                    <label class="switch"><input type="checkbox" id="set-sound" checked><span></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>浏览器通知</label>
+                    <label class="switch"><input type="checkbox" id="set-notify" checked><span></span></label>
+                </div>
+                <div class="settings-hint">
+                    通知需要你在浏览器地址栏旁允许「通知」权限；首次点开始会申请。
+                </div>
+            </div>
+        </section>
+
+        <!-- 任务与视图 -->
+        <section class="settings-pane" data-pane="task">
+            <div class="settings-section">
+                <h4>默认视图</h4>
+                <div class="settings-row">
+                    <label>打开时显示</label>
+                    <select id="set-defaultView" class="select">
+                        <option value="card">卡片</option>
+                        <option value="table">表格</option>
+                    </select>
+                </div>
+                <div class="settings-row">
+                    <label>默认排序</label>
+                    <select id="set-defaultSort" class="select">
+                        <option value="time-desc">最新在前</option>
+                        <option value="time-asc">最早在前</option>
+                        <option value="priority">按优先级</option>
+                    </select>
+                </div>
+                <div class="settings-row">
+                    <label>完成后自动归档</label>
+                    <label class="switch"><input type="checkbox" id="set-autoArchive"><span></span></label>
+                </div>
+            </div>
+        </section>
+
+        <!-- 数据与备份 -->
+        <section class="settings-pane" data-pane="data">
+            <div class="settings-section">
+                <h4>本地数据</h4>
+                <div id="dataStats" class="settings-hint">正在统计…</div>
+                <button id="exportDataBtn" class="settings-btn-block info" type="button">导出全部数据（JSON）</button>
+                <button id="importDataBtn" class="settings-btn-block ok" type="button">导入数据（JSON）</button>
+                <input type="file" id="importDataFile" accept=".json,application/json" hidden>
+                <button id="clearDataBtn" class="settings-btn-block danger" type="button">清空本机数据（危险）</button>
+                <button id="persistBtn" class="settings-btn-block" type="button">申请「持久化存储」（防浏览器自动清理）</button>
+                <div class="settings-hint">
+                    网页版的数据存在浏览器的 IndexedDB 里：换浏览器 / 清浏览数据 / 隐私模式都会丢，
+                    记得定期导出 JSON 备份。
+                </div>
+            </div>
+        </section>
+
+        <!-- 关于 -->
+        <section class="settings-pane" data-pane="about">
+            <div class="settings-section">
+                <h4>关于</h4>
+                <div class="settings-hint" id="aboutVersion">专注计时器 · 网页版 v1.0</div>
+                <div class="settings-hint">
+                    桌面版功能更全（全局快捷键、悬浮窗、AI 本地接口、企业微信表格同步）；
+                    网页版与桌面版共用同一套数据格式，导出的 JSON 可以互相导入。
+                </div>
+                <div class="settings-hint" id="aboutStorage"></div>
+            </div>
+        </section>
+    </div>
+</aside>
+
+<!-- 图片预览 -->
+<div class="img-viewer" id="imgViewer" hidden>
+    <img id="imgViewerImg" alt="预览">
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

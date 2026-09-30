@@ -184,6 +184,25 @@ function imageSpecs(list) {
     return (list || []).map(i => fs.existsSync(i) ? { path: path.resolve(i) } : { url: i });
 }
 
+/** 读示例 JSON：优先 --schema-json，其次 --schema-file（返回空串表示没给） */
+function schemaText(args) {
+    if (args['schema-json']) return args['schema-json'];
+    if (args['schema-file']) return fs.readFileSync(args['schema-file'], 'utf8');
+    return '';
+}
+
+/** 把 ['fA=content', 'fB=priority'] 解析成对象；格式不对直接报错 */
+function kvPairs(list, what) {
+    if (!list || !list.length) return null;
+    const out = {};
+    list.forEach(item => {
+        const i = String(item).indexOf('=');
+        if (i === -1) fail(what + ' 的格式应为 字段ID=值，收到：' + item);
+        out[String(item).slice(0, i).trim()] = String(item).slice(i + 1).trim();
+    });
+    return out;
+}
+
 // ---------------------------------------------------------------- 子命令
 
 const commands = {
@@ -317,27 +336,102 @@ const commands = {
     },
 
     async webhook(args) {
-        if (args.action === 'info') {
+        const action = args.action || 'info';
+        const flag = name => args[name];
+        if (action === 'info' || action === 'config') {
             const data = needOk(await call(args, 'GET', '/api/webhook'), '读取 WebHook');
             const w = data.webhook || {};
+            if (args.json) { console.log(JSON.stringify(w, null, 2)); return; }
             console.log('WebHook：%s · 模式 %s', w.enabled ? '启用' : '关闭', w.mode);
             console.log('地址：%s', w.url || '(未填写)');
             Object.entries(w.events || {}).forEach(([e, on]) => console.log('  事件 ' + String(e).padEnd(10) + (on ? '✓' : '✗')));
+            const fields = w.schemaFields || [];
+            const mapping = w.mapping || {};
+            const constants = w.constants || {};
+            console.log('字段：%d 列 · 已映射 %d 列 · record_id 缓存 %d 条', fields.length, Object.keys(mapping).length, w.recordCount || 0);
+            fields.forEach(f => {
+                let src = mapping[f.id] || '（不写入）';
+                let extra = src === 'const' ? ' = ' + (constants[f.id] || '') : '';
+                if (Array.isArray(f.enum) && f.enum.length) extra += '  [选项: ' + f.enum.join('/') + ']';
+                console.log('  %s %s → %s%s', String(f.id).padEnd(10), String(f.name || '').padEnd(16), src, extra);
+            });
             const hist = w.history || [];
             console.log('最近 %d 条推送：', Math.min(hist.length, 5));
             hist.slice(0, 5).forEach(h => {
                 console.log('  %s %s %s', h.ok ? '✓' : '✗', h.action, h.ok ? '' : (h.error || h.status));
             });
-        } else {
-            const body = { action: args.event };
-            if (args.ids) body.ids = splitIds(args.ids);
-            else if (args.all) {
-                const listing = needOk(await call(args, 'GET', '/api/tasks?scope=active'), '读取任务');
-                body.ids = (listing.tasks || []).map(t => t.id);
-            } else fail('用 --ids 1,2 指定任务，或 --all 推送全部活跃任务');
-            needOk(await call(args, 'POST', '/api/webhook', body), '推送到表格');
-            console.log('已触发推送到表格：%s', body.action);
+            return;
         }
+        if (action === 'test') {
+            const data = needOk(await call(args, 'POST', '/api/webhook', { action: 'test' }), '发送测试');
+            const result = data.result || {};
+            if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
+            if (data.ok) console.log('测试推送成功 ✓（表格里应出现一条测试记录）');
+            else {
+                console.log('测试推送失败：%s', result.error || result.body || result.status || '未知原因');
+                if (result.payload) console.log('载荷预览：%s', JSON.stringify(result.payload).slice(0, 400));
+            }
+            return;
+        }
+        if (action === 'parse') {
+            const text = schemaText(args);
+            if (!text) fail('用 --schema-file 或 --schema-json 提供「接收外部数据」页面的示例 JSON');
+            const data = needOk(await call(args, 'POST', '/api/webhook', { action: 'parse', schemaJson: text }), '解析示例 JSON');
+            const fields = data.fields || [];
+            if (args.json) { console.log(JSON.stringify(fields, null, 2)); return; }
+            console.log('解析到 %d 列：', fields.length);
+            fields.forEach(f => {
+                const enumText = (f.enum && f.enum.length) ? ('  选项: ' + f.enum.join('/')) : '';
+                console.log('  %s %s %s%s', String(f.id).padEnd(10), String(f.name || '').padEnd(16), String(f.type || '').padEnd(14), enumText);
+            });
+            return;
+        }
+        if (action === 'set') {
+            const patch = {};
+            if (flag('enable')) patch.enabled = true;
+            if (flag('disable')) patch.enabled = false;
+            if (args.url) patch.url = args.url;
+            const text = schemaText(args);
+            if (text) patch.schemaJson = text;
+            if (args['json-file']) Object.assign(patch, JSON.parse(fs.readFileSync(args['json-file'], 'utf8')));
+            const map = kvPairs(args.map, '--map');
+            if (map) patch.mapping = map;
+            const constants = kvPairs(args.const, '--const');
+            if (constants) patch.constants = constants;
+            if (args['record-ids-file']) {
+                const raw = JSON.parse(fs.readFileSync(args['record-ids-file'], 'utf8'));
+                const ids = {};
+                if (Array.isArray(raw)) {
+                    raw.forEach(item => { if (item && item.taskId !== undefined) ids[String(item.taskId)] = String(item.recordId || ''); });
+                } else {
+                    Object.keys(raw || {}).forEach(k => { ids[String(k)] = String(raw[k]); });
+                }
+                Object.keys(ids).forEach(k => { if (!ids[k]) delete ids[k]; });
+                if (Object.keys(ids).length) patch.recordIds = ids;
+            }
+            if (!Object.keys(patch).length) {
+                fail('没有要改的内容（--enable/--disable/--url/--schema-file/--map/--const/--json-file/--record-ids-file）');
+            }
+            const data = needOk(await call(args, 'POST', '/api/webhook', { action: 'config', config: patch }), '更新 WebHook 配置');
+            const w = data.webhook || {};
+            if (args.json) { console.log(JSON.stringify(w, null, 2)); return; }
+            console.log('已更新：%s · 字段 %d 列 · 映射 %d 列 · 固定文本 %d 项 · record_id %d 条',
+                w.enabled ? '启用' : '关闭', (w.schemaFields || []).length,
+                Object.keys(w.mapping || {}).length, Object.keys(w.constants || {}).length, w.recordCount || 0);
+            return;
+        }
+        // 默认：push
+        const body = { action: args.event || 'created' };
+        if (flag('force')) body.force = true;
+        if (args.ids) body.ids = splitIds(args.ids);
+        else if (args.all) {
+            const listing = needOk(await call(args, 'GET', '/api/tasks?scope=active'), '读取任务');
+            body.ids = (listing.tasks || []).map(t => t.id);
+        } else fail('用 --ids 1,2 指定任务，或 --all 推送全部活跃任务');
+        const data = needOk(await call(args, 'POST', '/api/webhook', body), '推送到表格');
+        const result = data.result || {};
+        if (data.ok) console.log('已推送 %d 条到表格 ✓', data.count || 0);
+        else console.log('推送失败（%d 条）：%s', data.count || 0, result.error || result.status || '未知原因');
     },
 
     async settings(args) {
@@ -393,8 +487,13 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
   window <show|hide|float>        主窗口 / 悬浮窗
   clipboard <get|set> [--path 路径 | --url 链接] [--save 路径]
                                   读写剪贴板图片（微信互通）
-  webhook <info|push> [--event 事件] [--ids 1,2 | --all]
-                                  查看 / 触发表格同步
+  webhook <info|push|config|set|parse|test>
+                                  info/config 看配置；push 推送（--event 事件 --ids 1,2|--all [--force]）
+                                  set 改配置（--enable|--disable --url 地址 --schema-file 示例JSON
+                                      --map 字段ID=来源 --const 字段ID=固定文本
+                                      --record-ids-file 回填.json --json-file 配置片段.json）
+                                  parse 只解析示例 JSON（--schema-file / --schema-json）
+                                  test 发一条测试记录到表格
   settings [key] [value]          读写应用设置
   schema                          打印 HTTP API 自描述
 
@@ -410,20 +509,28 @@ function parseArgs(argv) {
     const optionSingles = new Set(['--port', '--token', '--keyword', '--limit', '--scope', '--remind',
         '--content', '--append', '--priority', '--image', '--base64', '--comment',
         '--minutes', '-m', '--seconds', '-s', '--title', '--path', '--url', '--save',
-        '--event', '--ids', '-p', '-t']);
-    const optionFlags = new Set(['--json', '--undone', '--top', '--all']);
+        '--event', '--ids', '-p', '-t',
+        // 【2026-09-30】webhook 配置相关
+        '--schema-json', '--schema-file', '--json-file', '--record-ids-file']);
+    // 可重复的选项：--map fA=content --map fB=priority / --const fA=拯救小猫
+    const optionRepeats = new Set(['--image', '--map', '--const']);
+    const optionFlags = new Set(['--json', '--undone', '--top', '--all', '--enable', '--disable', '--force']);
     const aliases = { '-p': 'priority', '-t': 'type', '-m': 'minutes', '-s': 'seconds' };
 
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (optionFlags.has(a)) {
             args[a.slice(2)] = true;
-        } else if (optionSingles.has(a)) {
+        } else if (optionSingles.has(a) || optionRepeats.has(a)) {
             const value = argv[++i];
             if (value === undefined) fail('选项 ' + a + ' 缺少值');
             const key = aliases[a] || a.slice(2);
-            if (a === '--image') (args.image = args.image || []).push(value);
-            else args[key] = value;
+            if (optionRepeats.has(a)) {
+                const list = args[key] = args[key] || [];
+                list.push(value);
+            } else {
+                args[key] = value;
+            }
         } else if (a === '--help' || a === '-h') {
             console.log(HELP);
             process.exit(0);

@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
-const { createWebhook, DEFAULT_WEBHOOK_CONFIG, parseSchema, guessSource } = require('../webhook.js');
+const { createWebhook, DEFAULT_WEBHOOK_CONFIG, parseSchema, guessSource, coerceSelectText } = require('../webhook.js');
 
 /** 起一个临时接收端，返回收到的请求数组 */
 function withReceiver(fn, responder) {
@@ -134,6 +134,11 @@ test('guessSource 关键词识别', () => {
     assert.strictEqual(guessSource('图片数'), 'imageCount');
     assert.strictEqual(guessSource('图片'), 'image');
     assert.strictEqual(guessSource('随便什么'), '');
+    // 【2026-09-30 修复】具体规则必须先于「内容/任务」兜底，否则 任务状态 会被猜成 content
+    assert.strictEqual(guessSource('任务状态'), 'status');
+    assert.strictEqual(guessSource('任务名称'), 'content');
+    assert.strictEqual(guessSource('启动时间'), 'createdAt');
+    assert.strictEqual(guessSource('覆盖优先级'), 'priority');
 });
 
 // ---------------- 推送与错误处理 ----------------
@@ -299,4 +304,105 @@ test('没做字段映射时 test 直接返回提示', async () => {
     const res = await wh.test();
     assert.strictEqual(res.ok, false);
     assert.ok(String(res.body).indexOf('字段映射') !== -1);
+});
+
+// ---------------- 【2026-09-30 增加】枚举对齐 / 固定文本 / 配置 API ----------------
+
+/** 与真实企微智能表格示例 JSON 同构：schema 是「字段ID → 定义」的对象，带 enum 选项 */
+const REAL_SCHEMA = JSON.stringify({
+    schema: {
+        fqmfGP: { title: '任务名称', type: 'text' },
+        f8o4LT: { title: '所属项目', type: 'single_select', enum: ['拯救小猫', '打包平台'] },
+        f04uVx: { title: '优先级', type: 'single_select', enum: ['最高优', '高优', '低优'] },
+        f92PwS: { title: '任务状态', type: 'single_select', enum: ['已完成', '进行中', '未启动', '已逾期'] },
+        ft6n6X: { title: '启动时间', type: 'date_time' },
+        f146uC: { title: '实际完成时间', type: 'date_time' }
+    },
+    add_records: [{ values: { fqmfGP: '测试文本' } }]
+});
+
+test('parseSchema 能解析对象型 schema，并把单选列的选项一起带出来', () => {
+    const fields = parseSchema(REAL_SCHEMA);
+    const byId = {};
+    fields.forEach(f => { byId[f.id] = f; });
+    assert.strictEqual(fields.length, 6, '应解析出 6 列');
+    assert.strictEqual(byId.fqmfGP.name, '任务名称');
+    assert.deepStrictEqual(byId.f04uVx.enum, ['最高优', '高优', '低优'], '单选项必须被保留（写入前要对齐）');
+    assert.strictEqual(byId.f92PwS.enum.length, 4);
+});
+
+test('coerceSelectText：完全一致 > 包含关系 > 关键词规则，对不上返回空串', () => {
+    const priority = ['最高优', '高优', '低优'];
+    const status = ['已完成', '进行中', '未启动', '已逾期'];
+    assert.strictEqual(coerceSelectText('高优', priority), '高优');
+    // 「高」同时是「最高优」/「高优」的子串 → 取最短的，避免误判成最高优
+    assert.strictEqual(coerceSelectText('高', priority), '高优');
+    assert.strictEqual(coerceSelectText('低', priority), '低优');
+    // 应用内部的状态只有 已完成/未完成
+    assert.strictEqual(coerceSelectText('已完成', status), '已完成');
+    assert.strictEqual(coerceSelectText('未完成', status), '进行中');
+    assert.strictEqual(coerceSelectText('进行中', status), '进行中');
+    // 对不上：宁可跳过该列，也不要让企业微信 2023010 把整批拒掉
+    assert.strictEqual(coerceSelectText('中', priority), '');
+});
+
+test('wecom 模式：单选列写入前自动对齐表格枚举（避免 2023010）', () => {
+    const wh = makeWebhook({ enabled: true, mode: 'wecom', schemaFields: parseSchema(REAL_SCHEMA) });
+    wh.updateConfig({
+        mapping: { fqmfGP: 'content', f04uVx: 'priority', f92PwS: 'status' }
+    });
+    const built = wh.buildPayload('created', [sampleTask]);   // p=3 → 内部「高」
+    const values = built.add_records[0].values;
+    assert.deepStrictEqual(values.f04uVx, [{ text: '高优' }], '「高」应被对齐到表格里的「高优」');
+    assert.deepStrictEqual(values.f92PwS, [{ text: '进行中' }], '「未完成」应被对齐到「进行中」');
+});
+
+test('固定文本列：mapping=const 时写入 constants 里的文本（如 所属项目=拯救小猫）', () => {
+    const wh = makeWebhook({ enabled: true, mode: 'wecom', schemaFields: parseSchema(REAL_SCHEMA) });
+    wh.updateConfig({
+        mapping: { fqmfGP: 'content', f8o4LT: 'const' },
+        constants: { f8o4LT: '拯救小猫' }
+    });
+    const values = wh.buildPayload('created', [sampleTask]).add_records[0].values;
+    assert.deepStrictEqual(values.f8o4LT, [{ text: '拯救小猫' }]);
+    // 常量填了不在选项里的值 → 跳过该列
+    wh.updateConfig({ constants: { f8o4LT: '不存在的项目' } });
+    const values2 = wh.buildPayload('created', [sampleTask]).add_records[0].values;
+    assert.strictEqual(values2.f8o4LT, undefined);
+});
+
+test('updateConfig：schemaJson 解析后保留 enum；constants / recordIds 都是合并而不是覆盖', () => {
+    const wh = makeWebhook({ enabled: true, mode: 'wecom' });
+    wh.updateConfig({ parseSchemaOnly: REAL_SCHEMA });
+    const cfg1 = wh._cfg();
+    assert.strictEqual(cfg1.schemaFields.length, 6);
+    assert.deepStrictEqual(cfg1.schemaFields.find(f => f.id === 'f04uVx').enum, ['最高优', '高优', '低优']);
+
+    wh.updateConfig({ constants: { f8o4LT: '拯救小猫' } });
+    wh.updateConfig({ constants: { fl588S: '研发部' } });
+    wh.updateConfig({ recordIds: { 123: 'recA' } });
+    wh.updateConfig({ recordIds: { 456: 'recB' } });
+    const cfg2 = wh._cfg();
+    assert.deepStrictEqual(cfg2.constants, { f8o4LT: '拯救小猫', fl588S: '研发部' });
+    assert.deepStrictEqual(cfg2.recordIds, { 123: 'recA', 456: 'recB' });
+});
+
+test('空日期列必须跳过：不能把「没有时间」写成 2000-01-01', () => {
+    const wh = makeWebhook({ enabled: true, mode: 'wecom', schemaFields: parseSchema(REAL_SCHEMA) });
+    wh.updateConfig({ mapping: { fqmfGP: 'content', fzgcwV: 'remindAt', f146uC: 'doneAt' } });
+    const values = wh.buildPayload('created', [sampleTask]).add_records[0].values;   // 该任务没有 remindAt / doneTime
+    assert.strictEqual(values.fzgcwV, undefined, '没设截止时间时该列应跳过');
+    assert.strictEqual(values.f146uC, undefined, '完成时间同理');
+});
+
+test('info() 给 API 用的配置快照：url 打码、带字段/选项/映射/固定文本', () => {
+    const wh = makeWebhook({ enabled: true, mode: 'wecom', url: 'https://qyapi.weixin.qq.com/cgi-bin/wedoc/smartsheet/webhook?key=1234567890abcdef' });
+    wh.updateConfig({ parseSchemaOnly: REAL_SCHEMA, mapping: { fqmfGP: 'content' }, constants: { f8o4LT: '拯救小猫' } });
+    const info = wh.info();
+    assert.strictEqual(info.enabled, true);
+    assert.strictEqual(info.schemaFieldCount, 6);
+    assert.strictEqual(info.mapping.fqmfGP, 'content');
+    assert.deepStrictEqual(info.constants, { f8o4LT: '拯救小猫' });
+    assert.ok(info.url.indexOf('1234567890abcdef') === -1, 'url 必须打码，不能把整串密钥交给调用方');
+    assert.ok(Array.isArray(info.sources) && info.sources.length > 0);
 });

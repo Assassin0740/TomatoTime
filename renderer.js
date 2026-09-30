@@ -555,6 +555,11 @@
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
         let archivedNotes = JSON.parse(localStorage.getItem('archived_notes')) || [];
 
+        // 【2026-09-30】日期是否显示年份（设置面板「日期显示年份」）：
+        // 关掉后所有展示位置（表格视图 / 卡片 / 提醒徽标）统一变成 "09-30 18:45:31"，
+        // 窄窗口下每处省 5 个字符宽度。默认开 = 保持原行为。
+        let showYear = localStorage.getItem('showYear') !== 'false';
+
         let sortDirections = {
             time: 'asc',
             priority: 'asc',
@@ -2028,6 +2033,17 @@
             }
         }
 
+        /**
+         * 表格视图用的日期：日期与时间各自成段、各自不可断行，只在两者之间允许换行。
+         * 【2026-09-30 修复】之前直接输出 "2026-09-29 18:45:31" 一整串，列一窄浏览器就从
+         * 中间的连字符处断开（"2026-09-" / "29" / "18:45:31"），看起来就是"创建时间错位"。
+         * 现在宽列 → 一行；窄列 → 干净的"日期 / 时间"两行，不会再出现碎片。
+         */
+        function formatDatePair(timestamp) {
+            const parts = String(formatDate(timestamp)).split(' ');
+            return `<span class="dt-date">${parts[0] || ''}</span> <span class="dt-time">${parts[1] || ''}</span>`;
+        }
+
         function formatDate(timestamp) {
             const date = new Date(timestamp);
             const year = date.getFullYear();
@@ -2036,7 +2052,9 @@
             const hours = String(date.getHours()).padStart(2, '0');
             const minutes = String(date.getMinutes()).padStart(2, '0');
             const seconds = String(date.getSeconds()).padStart(2, '0');
-            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+            // 【2026-09-30】年份按设置决定是否显示（showYear，见设置面板「日期显示年份」）
+            const datePart = showYear ? `${year}-${month}-${day}` : `${month}-${day}`;
+            return `${datePart} ${hours}:${minutes}:${seconds}`;
         }
 
         function renderCommentText(text) {
@@ -2676,7 +2694,14 @@
         // 加载保存的筛选状态
         const savedFilter = localStorage.getItem('currentFilter');
         if (savedFilter) {
-            currentFilter = savedFilter;
+            // 白名单兜底：localStorage 脏值会让下面的按钮查找返回 null 直接崩
+            const validFilters = ['all', 'undone', 'done', 'p3', 'p2', 'p1'];
+            if (validFilters.indexOf(savedFilter) !== -1) {
+                currentFilter = savedFilter;
+            } else {
+                currentFilter = 'all';
+                localStorage.setItem('currentFilter', 'all');
+            }
             // 更新筛选按钮显示
             const filterNames = {
                 'all': '全部',
@@ -2688,7 +2713,8 @@
             };
             document.getElementById('filterToggle').textContent = '筛选: ' + filterNames[currentFilter] + ' ▼';
             document.querySelectorAll('.filter-option').forEach(b => b.classList.remove('active'));
-            document.getElementById('filter' + (currentFilter === 'all' ? 'All' : currentFilter === 'undone' ? 'Undone' : currentFilter === 'done' ? 'Done' : 'P' + currentFilter.charAt(1).toUpperCase())).classList.add('active');
+            const filterBtn = document.getElementById('filter' + (currentFilter === 'all' ? 'All' : currentFilter === 'undone' ? 'Undone' : currentFilter === 'done' ? 'Done' : 'P' + currentFilter.charAt(1).toUpperCase()));
+            if (filterBtn) filterBtn.classList.add('active');
         }
         
         // 初始化排序按钮显示
@@ -2900,6 +2926,158 @@
                 mainContainer.style.maxWidth = '1000px';
             }
         }
+
+        // 【2026-09-30】日期是否显示年份：切换后立即重绘两个视图（表格 + 卡片），
+        // 归档面板若已展开也一并重绘，不用重启应用。
+        const showYearToggle = document.getElementById('showYearToggle');
+        if (showYearToggle) {
+            showYearToggle.checked = showYear;
+            showYearToggle.onchange = () => {
+                showYear = showYearToggle.checked;
+                localStorage.setItem('showYear', showYear ? 'true' : 'false');
+                try { render(); renderTable(); renderArchiveHistory(); }
+                catch (e) { console.warn('[设置] 重绘日期失败：', e.message); }
+            };
+        }
+
+        // ============ 【2026-09-30】设置分栏（Tab） ============
+        // 面板从「一长条竖排」改成 7 个分类：外观显示 / 计时与提醒 / 悬浮窗 /
+        // AI 接入 / 表格同步 / 数据与备份 / 关于。DOM id 全部保持不变，
+        // 所以旧代码零改动，这里只负责切页与记住上次停留的分栏。
+        const settingsTabsEl = document.getElementById('settingsTabs');
+        const settingsPanesEl = document.getElementById('settingsPanes');
+        let currentSettingsTab = localStorage.getItem('settingsTab') || 'appearance';
+
+        function activateSettingsTab(name, persist) {
+            if (!settingsTabsEl || !settingsPanesEl) return;
+            const panes = Array.prototype.slice.call(settingsPanesEl.querySelectorAll('.settings-pane'));
+            if (!panes.some(p => p.getAttribute('data-pane') === name)) return;   // 名字无效就不动
+            Array.prototype.forEach.call(settingsTabsEl.querySelectorAll('.settings-tab'), t => {
+                t.classList.toggle('active', t.getAttribute('data-tab') === name);
+            });
+            panes.forEach(p => p.classList.toggle('active', p.getAttribute('data-pane') === name));
+            settingsPanesEl.scrollTop = 0;
+            currentSettingsTab = name;
+            if (persist !== false) localStorage.setItem('settingsTab', name);
+            if (name === 'data') refreshDataStats();
+        }
+
+        if (settingsTabsEl) {
+            settingsTabsEl.addEventListener('click', (e) => {
+                const btn = e.target && e.target.closest ? e.target.closest('.settings-tab') : null;
+                if (!btn) return;
+                e.stopPropagation();
+                activateSettingsTab(btn.getAttribute('data-tab'));
+            });
+        }
+        activateSettingsTab(currentSettingsTab, false);
+
+        /** 「数据与备份」页的占用统计（localStorage 的键值按 UTF-16 粗估） */
+        function refreshDataStats() {
+            const el = document.getElementById('dataStats');
+            if (!el) return;
+            try {
+                let bytes = 0;
+                let keys = 0;
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k === '__store_shim' || k === '__store_rev') continue;
+                    keys++;
+                    bytes += (String(k).length + String(localStorage.getItem(k) || '').length) * 2;
+                }
+                const imgCount = (JSON.stringify(notes) + JSON.stringify(archivedNotes)).match(/<img/g);
+                el.textContent = `任务 ${notes.length} 条 · 归档 ${archivedNotes.length} 条 · 本地键 ${keys} 个 · 约 ${(bytes / 1024).toFixed(0)} KB`
+                    + (imgCount ? ` · 含图片 ${imgCount.length} 张` : '');
+            } catch (e) {
+                el.textContent = '统计失败：' + e.message;
+            }
+        }
+
+        /** 导出：把 localStorage 全量打包成 JSON 下载（桌面版含图片路径，网页版含内联数据） */
+        function exportAllData() {
+            const storage = {};
+            try {
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k === '__store_shim' || k === '__store_rev') continue;
+                    storage[k] = localStorage.getItem(k);
+                }
+            } catch (e) { /* ignore */ }
+            const versionEl = document.getElementById('aboutVersion');
+            const payload = {
+                app: '专注计时器',
+                version: (versionEl && versionEl.dataset.version) || '',
+                exportedAt: new Date().toISOString(),
+                storage: storage
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'timer-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+            showAppToast('已导出备份文件');
+        }
+
+        /** 导入：接受本页导出的格式，也接受「裸 storage 对象」的旧格式 */
+        function importAllData(file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const parsed = JSON.parse(String(reader.result));
+                    const storage = parsed && parsed.storage ? parsed.storage : parsed;
+                    if (!storage || typeof storage !== 'object') throw new Error('文件里没有 storage 字段');
+                    if (!confirm('导入会覆盖当前全部任务与设置，确定继续吗？')) return;
+                    Object.keys(storage).forEach(k => localStorage.setItem(k, String(storage[k])));
+                    showAppToast('导入完成，正在重新加载…');
+                    setTimeout(() => location.reload(), 600);
+                } catch (e) {
+                    showAppToast('导入失败：' + e.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function clearLocalData() {
+            if (!confirm('确定清空本机保存的全部任务与设置？不可撤销（建议先导出备份）。')) return;
+            if (!confirm('再确认一次：清空后无法恢复。')) return;
+            try {
+                for (let i = localStorage.length - 1; i >= 0; i--) {
+                    const k = localStorage.key(i);
+                    if (k === '__store_shim' || k === '__store_rev') continue;
+                    localStorage.removeItem(k);
+                }
+            } catch (e) { /* ignore */ }
+            location.reload();
+        }
+
+        const exportDataBtn = document.getElementById('exportDataBtn');
+        if (exportDataBtn) exportDataBtn.onclick = exportAllData;
+        const importDataBtn = document.getElementById('importDataBtn');
+        const importDataFile = document.getElementById('importDataFile');
+        if (importDataBtn && importDataFile) {
+            importDataBtn.onclick = () => importDataFile.click();
+            importDataFile.onchange = () => {
+                if (importDataFile.files && importDataFile.files[0]) importAllData(importDataFile.files[0]);
+                importDataFile.value = '';
+            };
+        }
+        const clearLocalDataBtn = document.getElementById('clearLocalDataBtn');
+        if (clearLocalDataBtn) clearLocalDataBtn.onclick = clearLocalData;
+
+        // 关于页版本号：桌面版问主进程要；拿不到（网页版）就显示网页版字样
+        (async () => {
+            const el = document.getElementById('aboutVersion');
+            if (!el) return;
+            let version = '';
+            try { version = await ipcRenderer.invoke('app:version'); } catch (e) { version = ''; }
+            el.dataset.version = version || '';
+            el.innerHTML = version
+                ? `专注计时器 <b>v${version}</b>（桌面版）`
+                : '专注计时器（网页版，数据保存在本机浏览器）';
+        })();
 
         // 等待背景初始化完成后恢复选择
         bgInitPromise.then(() => {
@@ -3273,6 +3451,10 @@
         settingsBtn.onclick = (e) => {
             e.stopPropagation();
             settingsPanel.classList.toggle('show');
+            // 【2026-09-30】打开面板时，停在「数据与备份」页就顺手刷新占用统计
+            if (settingsPanel.classList.contains('show') && currentSettingsTab === 'data') {
+                refreshDataStats();
+            }
         };
 
         document.addEventListener('click', (e) => {
@@ -3573,17 +3755,17 @@
                 `;
                 
                 const rowInnerHtml = `
-                    <td style="text-align: left; vertical-align: top; max-width: 350px;">
-                        <div class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容" style="outline: none; color: #fff; line-height: 1.5; word-break: break-all;">${lazyloadifyHtml(n.content)}</div>
+                    <td style="text-align: left; vertical-align: top;">
+                        <div class="table-content" contenteditable="true" onblur="updateTableNote(${n.id}, this)" onkeydown="handleTableNoteKeydown(event)" title="点击编辑任务内容" style="outline: none; color: #fff; line-height: 1.5;">${lazyloadifyHtml(n.content)}</div>
                         ${commentsHtml}
                         ${commentInputHtml}
                     </td>
                     <td style="vertical-align: middle;"><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
                     <td style="vertical-align: middle;"><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
                     <td style="vertical-align: middle;"><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
-                    <td style="font-size:12px;color:#888;vertical-align: middle;">${formatDate(n.ts)}</td>
+                    <td style="font-size:12px;color:#888;vertical-align: middle;">${formatDatePair(n.ts)}</td>
                     <td style="font-size:12px;vertical-align: middle;">
-                        ${n.done && n.doneTime ? `<span style="color: #81c784; background: rgba(76, 175, 80, 0.15); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(76, 175, 80, 0.3); font-weight: 500;">✓ ${formatDate(n.doneTime)}</span>` : '<span style="color: #666;">-</span>'}
+                        ${n.done && n.doneTime ? `<span style="color: #81c784; background: rgba(76, 175, 80, 0.15); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(76, 175, 80, 0.3); font-weight: 500;">✓ ${formatDatePair(n.doneTime)}</span>` : '<span style="color: #666;">-</span>'}
                     </td>
                     <td style="vertical-align: middle; white-space: nowrap;">
                         <button onclick="toggleTableComment(${n.id})" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1); color:#ccc; padding:5px 8px; border-radius:4px; cursor:pointer; margin-right:5px;">💬评论</button>
@@ -4088,6 +4270,7 @@
             let whSources = [];       // 可选数据源（主进程给）
             let whSchemaFields = [];  // 从示例 JSON 解析出来的表格列
             let whMapping = {};       // 字段 ID → 数据源
+            let whConstants = {};     // 【2026-09-30】字段 ID → 固定文本（映射选「固定文本」时写入，如 所属项目=拯救小猫）
 
             function fieldsToText(fields) {
                 return Object.keys(fields || {}).map(k => k + '=' + fields[k]).join('\n');
@@ -4123,7 +4306,16 @@
                 }
             }
 
-            /** 每个表格列一行：列名 + 下拉框（选这条数据从哪来） */
+            /** 属性值转义：字段 ID 与固定文本都可能带引号/尖括号，拼进 HTML 前必须转义 */
+            function escapeAttr(s) {
+                return String(s === undefined || s === null ? '' : s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
+            /** 每个表格列一行：列名（带选项提示）+ 固定文本输入 + 下拉框（选这条数据从哪来） */
             function renderWebhookFieldRows() {
                 if (!whFieldRowsEl) return;
                 if (!whSchemaFields.length) {
@@ -4135,14 +4327,30 @@
                     const options = whSources.map(s =>
                         '<option value="' + s.key + '"' + (current === s.key ? ' selected' : '') + '>' + s.label + '</option>'
                     ).join('');
+                    // 【2026-09-30】把单选列的预设选项显示出来：内部值（高/未完成）与表格枚举（高优/进行中）
+                    // 对不上时写入会被企业微信以 2023010 拒收，这里提前提示可选项。
+                    const enumHint = Array.isArray(f.enum) && f.enum.length ? ' · 选项：' + f.enum.join(' / ') : '';
+                    const constStyle = current === 'const'
+                        ? 'width: 148px; padding: 4px 6px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;'
+                        : 'display: none;';
                     return '<div style="display: flex; align-items: center; gap: 6px;">' +
-                        '<span style="flex: 1; min-width: 0; font-size: 12px; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + f.id + ' / ' + f.type + '">' +
-                        f.name + '<span style="color: #666;"> · ' + f.type + '</span></span>' +
+                        '<span style="flex: 1; min-width: 0; font-size: 12px; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + f.id + ' / ' + f.type + enumHint + '">' +
+                        f.name + '<span style="color: #666;"> · ' + f.type + enumHint + '</span></span>' +
+                        '<input type="text" class="wh-const-input" data-field-id="' + f.id + '" placeholder="固定文本" value="' + escapeAttr(whConstants[f.id] || '') + '" style="' + constStyle + '" />' +
                         '<select data-field-id="' + f.id + '" class="wh-map-select" style="width: 148px; padding: 4px 6px; background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px;">' +
                         options + '</select></div>';
                 }).join('');
                 whFieldRowsEl.querySelectorAll('.wh-map-select').forEach(sel => {
-                    sel.onchange = () => { whMapping[sel.getAttribute('data-field-id')] = sel.value; };
+                    sel.onchange = () => {
+                        const id = sel.getAttribute('data-field-id');
+                        whMapping[id] = sel.value;
+                        // 切到「固定文本」时把输入框露出来（切走时内容保留，方便来回切）
+                        const input = whFieldRowsEl.querySelector('.wh-const-input[data-field-id="' + id + '"]');
+                        if (input) input.style.display = sel.value === 'const' ? '' : 'none';
+                    };
+                });
+                whFieldRowsEl.querySelectorAll('.wh-const-input').forEach(input => {
+                    input.oninput = () => { whConstants[input.getAttribute('data-field-id')] = input.value; };
                 });
             }
 
@@ -4169,6 +4377,7 @@
                 if (data && data.sources) whSources = data.sources;
                 whSchemaFields = Array.isArray(cfg.schemaFields) ? cfg.schemaFields : [];
                 whMapping = Object.assign({}, cfg.mapping || {});
+                whConstants = Object.assign({}, cfg.constants || {});
                 if (whEnabledEl) whEnabledEl.checked = !!cfg.enabled;
                 if (whUrlEl) whUrlEl.value = cfg.url || '';
                 if (whModeEl) whModeEl.value = cfg.mode || 'wecom';
@@ -4231,7 +4440,8 @@
                     template: whTemplateEl ? whTemplateEl.value : '',
                     events: collectWebhookEvents(),
                     fields: textToFields(whFieldsEl ? whFieldsEl.value : ''),
-                    mapping: whMapping
+                    mapping: whMapping,
+                    constants: whConstants
                 });
             }
 
