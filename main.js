@@ -8,9 +8,16 @@ const store = require('./store');
 const { createApiServer } = require('./api-server');
 const { createWebhook, DEFAULT_WEBHOOK_CONFIG } = require('./webhook');
 
+// GPU 进程沙箱在部分环境（虚拟显卡混装 / 远程桌面 / 向日葵·MuMu 之类虚拟显示适配器）下会让
+// GPU 进程一启动就崩溃（exit_code=-1073741819），整个应用退化成软件渲染——此时透明悬浮窗没有
+// alpha 通道，只剩"不透明黑板"或"干脆看不见"。只关 GPU 进程的沙箱、保留渲染进程沙箱，
+// 风险很低，却能把硬件合成和真透明救回来。
+if (!app.commandLine.hasSwitch('disable-gpu') && !app.commandLine.hasSwitch('disable-gpu-sandbox')) {
+    app.commandLine.appendSwitch('disable-gpu-sandbox');
+}
+
 // 单实例锁定
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
+const gotTheLock = app.requestSingleInstanceLock();if (!gotTheLock) {
     console.log('第二个实例，直接退出');
     app.quit();
     process.exit(0);
@@ -117,7 +124,9 @@ function loadFloatWindowConfig() {
         height: 100,
         x: null,
         y: null,
-        withBackground: true
+        // 默认透明：悬浮窗本来就该是"只有文字浮在桌面上"。软件渲染环境会在创建窗口时
+        // 自动回退成不透明底板（见 createFloatWindow），所以这里不需要保守。
+        withBackground: false
     };
 }
 
@@ -194,9 +203,20 @@ let isAlwaysOnTop = false;
 let isTimerRunning = false;
 let isDragging = false;
 let dragOffset = { x: 0, y: 0 };
+let dragSize = null;   // 拖动开始时的窗口尺寸，拖动全程锁死，避免被 DPI 取整"蹭大"
+// 规范尺寸：只在窗口创建 / 用户手动拉伸时更新，拖动期间一律用它。
+// 按 4 的倍数对齐——125%(×1.25)、150%(×1.5)、100%、200% 下都能整除，
+// 这样 setBounds 来回换算物理像素不丢精度，避免"拖一次大一点点"。
+let floatSize = null;
+const quantizeFloatSize = (w, h) => ({
+    width: Math.min(700, Math.max(148, Math.round(w / 4) * 4)),
+    height: Math.min(248, Math.max(52, Math.round(h / 4) * 4))
+});
 let withBackground = true;
 let isWindowLocked = false;
 let isFloatPinned = true;
+// 当前进程能不能用「真·透明窗口」（需要 GPU 合成）
+let floatCanTransparent = true;
 
 // 计时器状态（在主进程中运行，不受页面隐藏影响）
 let timerInterval = null;
@@ -313,7 +333,63 @@ function toggleFloatWindow() {
         floatWindow.close();
         return;
     }
+    createFloatWindow({ flash: true });
+}
 
+/**
+ * 把已打开的悬浮窗拉回可见位置并让它"闪一下"：
+ * 悬浮窗是无边框 + 透明 + 不占任务栏的，一旦跑到屏幕外、或者跟浅色壁纸糊在一起，
+ * 用户就只能干瞪眼。复位时按当前鼠标所在显示器居中，再画一圈虚线提示 2.5 秒。
+ */
+function resetFloatWindow() {
+    const { screen } = require('electron');
+    if (!floatWindow || floatWindow.isDestroyed()) {
+        createFloatWindow({ center: true, flash: true });
+        return;
+    }
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const area = display.workArea;
+    const b = floatWindow.getBounds();
+    const x = Math.round(area.x + Math.max(0, (area.width - b.width) / 2));
+    const y = Math.round(area.y + Math.max(0, (area.height - b.height) / 2));
+    floatWindow.setBounds({ x, y, width: b.width, height: b.height });
+    if (isFloatPinned) floatWindow.setAlwaysOnTop(true);
+    if (floatWindow.isMinimized()) floatWindow.restore();
+    floatWindow.show();
+    floatWindow.moveTop();
+    try { floatWindow.webContents.send('float-flash'); } catch (e) { /* 还没加载完就算了 */ }
+    saveFloatWindowConfig({ x, y });
+}
+
+/** 右键菜单里的「放大 / 缩小」：按比例改窗口尺寸，以中心为基准，限制在 150~700 × 50~250 */
+function zoomFloatWindow(factor) {
+    if (!floatWindow || floatWindow.isDestroyed()) return;
+    const b = floatWindow.getBounds();
+    const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
+    const width = clamp(b.width * factor, 150, 700);
+    const height = clamp(b.height * factor, 50, 250);
+    if (width === b.width && height === b.height) return;
+    const x = Math.round(b.x + (b.width - width) / 2);
+    const y = Math.round(b.y + (b.height - height) / 2);
+    floatWindow.setBounds({ x, y, width, height });
+    floatSize = quantizeFloatSize(width, height);
+    saveFloatWindowConfig({ x, y, width, height });
+}
+
+// 悬浮窗「透明/背景」状态统一出口。
+// 真·透明（只有文字、背景透出桌面）必须依赖窗口的 alpha 通道，也就是必须能 GPU 合成。
+// 软件渲染下窗口没有 alpha，只剩两种可能：不透明底板，或者整窗半透明（连字一起变淡）。
+// 后者不是用户要的效果，所以这里只做状态同步，不碰窗口不透明度。
+function applyFloatBackdrop(opts) {
+    const silent = !!(opts && opts.silent);
+    if (!floatWindow || floatWindow.isDestroyed()) return;
+    if (!silent && floatWindow.webContents) {
+        floatWindow.webContents.send('set-background', withBackground);
+    }
+}
+
+function createFloatWindow(options) {
+    const opts = options || {};
     const { screen, Menu, MenuItem } = require('electron');
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
@@ -324,7 +400,7 @@ function toggleFloatWindow() {
     const windowHeight = savedConfig.height || 100;
     let windowX = savedConfig.x;
     let windowY = savedConfig.y;
-    withBackground = savedConfig.withBackground !== undefined ? savedConfig.withBackground : true;
+    withBackground = savedConfig.withBackground !== undefined ? savedConfig.withBackground : false;
     
     // 如果没有保存位置，使用默认位置
     if (windowX === null || windowY === null) {
@@ -352,16 +428,35 @@ function toggleFloatWindow() {
             windowY = 20;
         }
     }
+
+    // 右键「复位」：忽略历史位置，直接在当前鼠标所在显示器居中
+    if (opts.center) {
+        const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+        const area = display.workArea;
+        windowX = Math.round(area.x + Math.max(0, (area.width - windowWidth) / 2));
+        windowY = Math.round(area.y + Math.max(0, (area.height - windowHeight) / 2));
+    }
     
+    // 透明窗口依赖 GPU 合成：一旦被强制软件渲染（--disable-gpu，例如远程桌面 / 显卡驱动异常 /
+    // 被工具以无 GPU 方式拉起），窗口内容其实是画好的，但桌面上一片空白——用户只看到"打开了却找不到"。
+    // 这种情况退化成不透明小窗（深色底板），至少保证看得见、能拖动。
+    const canUseTransparent = !app.commandLine.hasSwitch('disable-gpu') && !app.commandLine.hasSwitch('disable-gpu-compositing');
+    floatCanTransparent = canUseTransparent;
+    if (!canUseTransparent) {
+        console.warn('[float] 当前为软件渲染：窗口没有 alpha 通道，无法做"只有文字"的真透明，本次退化为不透明底板');
+        // 只在内存里纠正，不回写配置文件——否则用户下次在有显卡的环境启动就变不回透明了
+        withBackground = true;
+    }
+
     const floatWindowOptions = {
         width: windowWidth,
         height: windowHeight,
         x: windowX,
         y: windowY,
         frame: false,
-        transparent: true,
-        backgroundColor: '#00000000',
-        opacity: 0.999,
+        transparent: canUseTransparent,
+        backgroundColor: canUseTransparent ? '#00000000' : '#14141e',
+        opacity: canUseTransparent ? 0.999 : 1,
         hasShadow: false,
         alwaysOnTop: isFloatPinned,
         skipTaskbar: true,
@@ -390,7 +485,14 @@ function toggleFloatWindow() {
     }
 
     floatWindow = new BrowserWindow(floatWindowOptions);
-    
+
+    // 记录一份"规范尺寸"（按 4 的倍数对齐），之后拖动/复位都以它为准，不再反复读系统值
+    const initSize = floatWindow.getContentSize();
+    floatSize = quantizeFloatSize(initSize[0], initSize[1]);
+    if (initSize[0] !== floatSize.width || initSize[1] !== floatSize.height) {
+        floatWindow.setContentSize(floatSize.width, floatSize.height);
+    }
+
     floatWindow.setAlwaysOnTop(isFloatPinned);
     floatWindow.setIgnoreMouseEvents(isWindowLocked);
     
@@ -402,12 +504,22 @@ function toggleFloatWindow() {
     // 显示窗口
     floatWindow.once('ready-to-show', () => {
         floatWindow.show();
-        // 发送初始背景状态
-        if (!withBackground) {
-            floatWindow.webContents.send('toggle-background');
+        if (isFloatPinned) {
+            floatWindow.setAlwaysOnTop(true);
+            floatWindow.moveTop();
         }
+        // 推送当前背景状态（明确告知开/关，不再靠两边默认值对齐）
+        applyFloatBackdrop();
         // 推送保存的显示设置（直接读主进程集中存储，不再依赖主窗口）
         pushSettingsToFloatWindow();
+        // 居中打开时亮一下边框，不然透明窗口在浅色壁纸上等于隐身
+        if (opts.flash) {
+            setTimeout(() => {
+                if (floatWindow && !floatWindow.isDestroyed()) {
+                    try { floatWindow.webContents.send('float-flash'); } catch (e) { }
+                }
+            }, 350);
+        }
     });
     
     // 移除防止失焦出现标题栏的旧 blur hack，因为把窗口 opacity 设为 0.999 会使 Chromium 以层合成模式（Layered Window）渲染，Windows DWM 永远不会为其绘制白条标题栏。
@@ -437,7 +549,14 @@ function toggleFloatWindow() {
     };
     
     floatWindow.on('move', saveWindowState);
-    floatWindow.on('resize', saveWindowState);
+    // 用户自己拉伸边缘时更新规范尺寸；拖动过程中的 resize 不算（那是我们自己在纠偏）
+    floatWindow.on('resize', () => {
+        if (!isDragging && floatWindow && !floatWindow.isDestroyed()) {
+            const cs = floatWindow.getContentSize();
+            floatSize = quantizeFloatSize(cs[0], cs[1]);
+        }
+        saveWindowState();
+    });
 
     const createContextMenu = () => {
         const menu = new Menu();
@@ -466,8 +585,18 @@ function toggleFloatWindow() {
             }
         }));
         menu.append(new MenuItem({ type: 'separator' }));
+        // 尺寸改成菜单里显式调：无边框窗口开着 resizable 时四条边有隐形拉伸手柄，
+        // 拖动时抓在边缘会同时触发"改大小"，看起来就是"一移动就变大"。
         menu.append(new MenuItem({
-            label: '🖼️ 设置悬浮窗配图…',
+            label: '🔍 放大',
+            click: () => { zoomFloatWindow(1.15); }
+        }));
+        menu.append(new MenuItem({
+            label: '🔎 缩小',
+            click: () => { zoomFloatWindow(1 / 1.15); }
+        }));
+        menu.append(new MenuItem({ type: 'separator' }));
+        menu.append(new MenuItem({
             click: async () => {
                 const result = await dialog.showOpenDialog(floatWindow, {
                     filters: [
@@ -501,12 +630,13 @@ function toggleFloatWindow() {
         }));
         menu.append(new MenuItem({ type: 'separator' }));
         menu.append(new MenuItem({
-            label: withBackground ? '👻 透明背景' : '🎨 显示背景',
+            label: !floatCanTransparent
+                ? '👻 透明背景（显卡不可用，暂不支持）'
+                : (withBackground ? '👻 透明背景' : '🎨 显示背景'),
+            enabled: floatCanTransparent,
             click: () => {
                 withBackground = !withBackground;
-                if (floatWindow && !floatWindow.isDestroyed()) {
-                    floatWindow.webContents.send('toggle-background');
-                }
+                applyFloatBackdrop();
                 saveFloatWindowConfig({ withBackground: withBackground });
             }
         }));
@@ -590,20 +720,33 @@ function toggleFloatWindow() {
             const pos = floatWindow.getPosition();
             dragOffset.x = data.screenX - pos[0];
             dragOffset.y = data.screenY - pos[1];
+            // 用主进程记着的规范尺寸，而不是临时读 getBounds（读出来的值带小数/边框，来回换算会漂）
+            const cur = floatWindow.getContentSize();
+            dragSize = floatSize || quantizeFloatSize(cur[0], cur[1]);
         }
     });
 
     ipcMain.on('float-mousemove', (event, data) => {
         if (isDragging && floatWindow && !floatWindow.isDestroyed()) {
-            floatWindow.setPosition(
-                Math.floor(data.screenX - dragOffset.x),
-                Math.floor(data.screenY - dragOffset.y)
-            );
+            // 位置和尺寸一次设完（setBounds），不要"先 setPosition 再纠尺寸"——
+            // 那样中间会有一帧被系统改大，用户看到的就是"忽大忽小"。
+            const bounds = {
+                // 位置也对齐到 4 的倍数：125% / 150% 缩放下正好落整数物理像素，
+                // 否则窗口边缘被系统吸附回整像素，宽度会在 608/610 之间来回跳（视觉上"忽大忽小"）
+                x: Math.round((data.screenX - dragOffset.x) / 4) * 4,
+                y: Math.round((data.screenY - dragOffset.y) / 4) * 4
+            };
+            if (dragSize) {
+                bounds.width = dragSize.width;
+                bounds.height = dragSize.height;
+            }
+            floatWindow.setBounds(bounds);
         }
     });
 
     ipcMain.on('float-mouseup', () => {
         isDragging = false;
+        dragSize = null;
     });
 
     floatWindow.on('close', () => {
@@ -629,6 +772,7 @@ function toggleFloatWindow() {
         clearTimeout(saveTimeout);
         floatWindow = null;
         isDragging = false;
+        dragSize = null;
         ipcMain.removeAllListeners('show-float-menu');
         ipcMain.removeAllListeners('float-mousedown');
         ipcMain.removeAllListeners('float-mousemove');
@@ -798,6 +942,18 @@ function createWindow() {
         isTimerRunning = running;
     });
 
+    // Markdown 里的链接：只放行 http/https，交给系统默认浏览器打开
+    // （任务内容是 contenteditable，直接给 <a> 会把应用窗口本身导航走）
+    ipcMain.on('open-external', (event, url) => {
+        const target = String(url || '').trim();
+        if (!/^https?:\/\//i.test(target)) return;
+        try {
+            require('electron').shell.openExternal(target);
+        } catch (e) {
+            console.error('打开外部链接失败:', e);
+        }
+    });
+
     // 处理从主页面来的锁定请求
     ipcMain.on('toggle-float-lock', () => {
         isWindowLocked = !isWindowLocked;
@@ -815,6 +971,11 @@ function createWindow() {
 
     ipcMain.on('toggle-float-window', () => {
         toggleFloatWindow();
+    });
+
+    // 右键悬浮窗按钮：不管开没开、跑到哪儿去了，都复位到鼠标所在屏幕的正中间
+    ipcMain.on('reset-float-window', () => {
+        resetFloatWindow();
     });
 
     ipcMain.on('close-float-window', () => {
@@ -951,6 +1112,15 @@ function createWindow() {
 
     ipcMain.on('store:clear', () => {
         store.clear();
+    });
+
+    // 渲染进程每次保存任务后催一次立即落盘（异常关闭时尽量少丢最后一批数据）
+    ipcMain.on('store:flush', () => {
+        try {
+            store.flushSync();
+        } catch (e) {
+            console.error('[store] 立即落盘失败：', e);
+        }
     });
 
     // 供主进程内部 / 将来其它通道查询
@@ -1520,12 +1690,22 @@ ipcMain.handle('cleanup-unused-images', async (event, usedFileNames) => {
         
         // 转换引用列表为 Set 加快查找
         const usedSet = new Set(usedFileNames);
+        // 【2026-10-20】保护期：最近 24 小时内写入的图片一律不删。
+        // 异常关闭后 localStorage 可能落后于磁盘（任务里还来不及写入图片引用），
+        // 这时按旧数据做 GC 会把刚粘贴的图片当成“孤儿”删掉，重开就没了。
+        // 宁可多留一天，也不要误删用户刚存的图。
+        const GRACE_MS = 24 * 60 * 60 * 1000;
+        const now = Date.now();
         
         files.forEach(file => {
             // 只清理 img_ 开头的文件，保证安全性，避免误删其他文件
             if (file.startsWith('img_') && !usedSet.has(file)) {
                 try {
                     const filePath = path.join(noteImagesPath, file);
+                    const stat = fs.statSync(filePath);
+                    if (now - stat.mtimeMs < GRACE_MS) {
+                        return; // 保护期内：跳过
+                    }
                     fs.unlinkSync(filePath);
                     console.log('图片垃圾回收成功删除孤立文件:', file);
                     deletedCount++;
@@ -1563,6 +1743,23 @@ ipcMain.handle('clipboard:read-image', async () => {
 });
 
 /**
+ * 读取系统剪贴板里的 HTML（CF_HTML）。
+ * 【2026-11-05】腾讯文档 / 在线表格复制表格时，网页 paste 事件的 clipboardData 偶尔
+ * 只给自定义格式、text/plain 又是空的，渲染进程会以为「什么都没复制」。
+ * 这里由主进程直读系统剪贴板作为最后一道兜底，渲染进程再交给 clipboard-table.js 解析。
+ */
+ipcMain.handle('clipboard:read-html', async () => {
+    try {
+        const formats = clipboard.availableFormats();
+        const html = clipboard.readHTML();
+        return { ok: !!html, html: html || '', formats: formats.slice(0, 20) };
+    } catch (e) {
+        console.error('[clipboard] 读取 HTML 失败：', e);
+        return { ok: false, html: '', error: e.message };
+    }
+});
+
+/**
  * 把图片写进系统剪贴板，使其可以粘贴到微信等外部软件。
  *  mode='bitmap'：写位图（Chromium 会同时提供 DIB 与 PNG，绝大多数程序可用）
  *  mode='file'  ：写文件拖放列表（CF_HDROP）——粘贴图片文件，微信一定认
@@ -1592,6 +1789,70 @@ ipcMain.handle('clipboard:write-image', async (event, src, mode) => {
         return { ok: true, mode: 'bitmap', size: image.getSize() };
     } catch (e) {
         console.error('[clipboard] 写入图片失败：', e);
+        return { ok: false, error: e.message };
+    }
+});
+
+/**
+ * 把应用内图片（file:// / 本地路径 / NoteImages 相对路径 / 网络地址）读成 data URL。
+ * 复制「图文混排」到剪贴板时，HTML 里的图片必须内嵌为 data URL，
+ * 否则企业微信 / Word / 邮件客户端都读不到 file:// 路径。
+ */
+ipcMain.handle('image:to-data-url', async (event, src) => {
+    try {
+        if (typeof src !== 'string' || !src) return { ok: false, error: '图片地址为空' };
+        if (src.indexOf('data:image/png') === 0) {
+            const img = nativeImage.createFromDataURL(src);
+            return { ok: true, dataUrl: src, size: img.isEmpty() ? null : img.getSize() };
+        }
+        let fileUrl = src;
+        if (/^https?:/i.test(src)) fileUrl = await saveImageFromInput({ url: src });
+        let filePath = fileUrl;
+        if (fileUrl.startsWith('file://')) filePath = nodeUrl.fileURLToPath(fileUrl);
+        else if (!path.isAbsolute(filePath)) {
+            // 兼容网页版约定的相对路径 NoteImages/img_xxx.png
+            filePath = path.join(noteImagesPath, path.basename(filePath));
+        }
+        const buffer = fs.readFileSync(filePath);
+        // 统一转成 PNG：剪贴板 HTML / RTF 都以 PNG 内嵌，兼容性最好
+        const image = nativeImage.createFromBuffer(buffer);
+        if (!image.isEmpty()) {
+            return { ok: true, dataUrl: 'data:image/png;base64,' + image.toPNG().toString('base64'), size: image.getSize() };
+        }
+        const ext = path.extname(filePath).replace('.', '').toLowerCase();
+        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+            : ext === 'gif' ? 'image/gif'
+            : ext === 'webp' ? 'image/webp'
+            : ext === 'bmp' ? 'image/bmp'
+            : ext === 'svg' ? 'image/svg+xml'
+            : 'image/png';
+        return { ok: true, dataUrl: 'data:' + mime + ';base64,' + buffer.toString('base64'), bytes: buffer.length };
+    } catch (e) {
+        console.error('[clipboard] 图片转 data URL 失败：', e);
+        return { ok: false, error: e.message };
+    }
+});
+
+/**
+ * 一次性写入「文字 + HTML + RTF + 位图」到系统剪贴板。
+ * 应用内全选复制时用：外部编辑器拿 HTML/RTF 保留图片，聊天工具拿位图。
+ */
+ipcMain.handle('clipboard:write-rich', async (event, payload) => {
+    try {
+        const p = payload || {};
+        const data = {};
+        if (typeof p.text === 'string' && p.text) data.text = p.text;
+        if (typeof p.html === 'string' && p.html) data.html = p.html;
+        if (typeof p.rtf === 'string' && p.rtf) data.rtf = p.rtf;
+        if (typeof p.imageDataUrl === 'string' && p.imageDataUrl.indexOf('data:image') === 0) {
+            const img = nativeImage.createFromDataURL(p.imageDataUrl);
+            if (!img.isEmpty()) data.image = img;
+        }
+        if (Object.keys(data).length === 0) return { ok: false, error: '没有可写入剪贴板的内容' };
+        clipboard.write(data);
+        return { ok: true, formats: Object.keys(data) };
+    } catch (e) {
+        console.error('[clipboard] 写入图文失败：', e);
         return { ok: false, error: e.message };
     }
 });
@@ -1836,6 +2097,136 @@ ipcMain.handle('main-settings:set', (event, patch) => {
 // 【2026-09-30】设置面板「关于」页要显示版本号：渲染进程无法直接读 package.json
 ipcMain.handle('app:version', () => app.getVersion());
 
+// ==================== 检查更新 ====================
+// 安装包放在 https://www.gdpudev.cn/timer/release/<版本号>/ 下；
+// 元数据优先读同目录的 latest.json，没有就退回解析 nginx 目录列表（取最大版本号）。
+const UPDATE_BASE = 'https://www.gdpudev.cn/timer/release';
+
+function httpGetText(url, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (err, data) => {
+            if (settled) return;
+            settled = true;
+            if (err) reject(err); else resolve(data);
+        };
+        let req;
+        try {
+            req = require('https').get(url, {
+                timeout: timeoutMs || 8000,
+                headers: {
+                    'User-Agent': 'timer-app/' + app.getVersion(),
+                    'Accept': 'application/json,text/html,*/*',
+                    'Accept-Encoding': 'identity',
+                    'Cache-Control': 'no-cache'
+                }
+            }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    res.resume();
+                    const next = new URL(res.headers.location, url).href;
+                    httpGetText(next, timeoutMs).then(d => finish(null, d), e => finish(e));
+                    return;
+                }
+                if (res.statusCode !== 200) {
+                    res.resume();
+                    finish(new Error('HTTP ' + res.statusCode));
+                    return;
+                }
+                const chunks = [];
+                res.on('data', c => chunks.push(c));
+                res.on('end', () => finish(null, Buffer.concat(chunks).toString('utf8')));
+                res.on('error', e => finish(e));
+            });
+            req.on('timeout', () => req.destroy(new Error('请求超时')));
+            req.on('error', e => finish(e));
+        } catch (e) {
+            finish(e);
+        }
+    });
+}
+
+function parseVerParts(v) {
+    return String(v || '').replace(/^v/i, '').split(/[.+-]/).slice(0, 3).map(n => parseInt(n, 10) || 0);
+}
+
+function cmpVersion(a, b) {
+    const A = parseVerParts(a);
+    const B = parseVerParts(b);
+    for (let i = 0; i < 3; i++) {
+        const x = A[i] || 0;
+        const y = B[i] || 0;
+        if (x !== y) return x > y ? 1 : -1;
+    }
+    return 0;
+}
+
+async function fetchUpdateInfo() {
+    const current = app.getVersion();
+
+    // 1) latest.json（推荐，能带上更新说明和文件大小）
+    try {
+        const txt = await httpGetText(UPDATE_BASE + '/latest.json?t=' + Date.now(), 8000);
+        const info = JSON.parse(txt);
+        if (info && info.version) {
+            const file = info.file || '';
+            return {
+                ok: true,
+                current: current,
+                latest: String(info.version).replace(/^v/i, ''),
+                url: info.url || (file ? UPDATE_BASE + '/' + info.version + '/' + encodeURIComponent(file) : UPDATE_BASE + '/' + info.version + '/'),
+                notes: info.notes || '',
+                date: info.date || '',
+                size: Number(info.size) || 0,
+                source: 'latest.json'
+            };
+        }
+    } catch (e) { /* 没配 latest.json 就走下面的目录列表 */ }
+
+    // 2) 退回目录列表：/timer/release/ 下有 1.1.0/ 1.1.1/ …
+    const listHtml = await httpGetText(UPDATE_BASE + '/?t=' + Date.now(), 8000);
+    const versions = Array.from(new Set(
+        (listHtml.match(/href="[^"]*?(\d+\.\d+\.\d+)\/?"/g) || []).map(m => (m.match(/(\d+\.\d+\.\d+)/) || [])[1]).filter(Boolean)
+    ));
+    if (!versions.length) throw new Error('服务器上没有找到版本目录');
+    versions.sort(cmpVersion);
+    const latest = versions[versions.length - 1];
+    const dirHtml = await httpGetText(UPDATE_BASE + '/' + latest + '/?t=' + Date.now(), 8000);
+    const exeMatch = dirHtml.match(/href="([^"]+\.exe)"/i);
+    const file = exeMatch ? decodeURIComponent(exeMatch[1]) : '';
+    return {
+        ok: true,
+        current: current,
+        latest: latest,
+        url: file ? UPDATE_BASE + '/' + latest + '/' + encodeURIComponent(file) : UPDATE_BASE + '/' + latest + '/',
+        notes: '',
+        date: '',
+        size: 0,
+        source: 'autoindex'
+    };
+}
+
+ipcMain.handle('update:check', async () => {
+    try {
+        const info = await fetchUpdateInfo();
+        info.hasUpdate = cmpVersion(info.latest, info.current) > 0;
+        return info;
+    } catch (e) {
+        return { ok: false, current: app.getVersion(), error: (e && e.message) || String(e) };
+    }
+});
+
+ipcMain.handle('update:open', (event, url) => {
+    const target = String(url || '').trim();
+    if (!/^https?:\/\//i.test(target)) return { ok: false, error: '无效链接' };
+    try {
+        require('electron').shell.openExternal(target);
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, error: (e && e.message) || String(e) };
+    }
+});
+
+
 ipcMain.handle('api:regenerate-token', () => {
     mainSettings.api.token = crypto.randomBytes(12).toString('hex');
     saveMainSettings();
@@ -1858,6 +2249,17 @@ ipcMain.handle('api:example', () => {
         '',
         '# 3) 查看全部任务',
         'curl "http://127.0.0.1:' + info.port + '/api/tasks?scope=active" ' + h.join(' '),
+        '',
+        '# ---- 内容写法：content 和 comments 都支持轻量 markdown，渲染出来是真正的排版 ----',
+        '#   标题      "## 进度更新"        （# 一级 ~ #### 四级）',
+        '#   列表      "- 甲\\n- 乙"        有序 "1. 第一步\\n2. 第二步"',
+        '#   强调      "**粗体** *斜体* ~~删除线~~ `代码`"',
+        '#   链接      "[设计文档](https://example.com/doc)"   只认 http/https',
+        '#   引用/分隔 "> 结论：通过"        "---"',
+        '# 也接受 HTML 标签：<h3> <ul><li> <ol><li> <blockquote> <a href> <pre> <hr> <br>',
+        '# （会被转成同样的样式，不会以字面量 / 浏览器默认大字显示）',
+        '# 带排版的例子：',
+        'curl -X POST http://127.0.0.1:' + info.port + '/api/tasks ' + h.join(' ') + ' -H "Content-Type: application/json" -d "{\\"content\\":\\"## 进度更新\\\\n- 甲：已完成\\\\n- 乙：进行中\\\\n\\\\n**重点**：今天必须收尾\\",\\"comments\\":[\\"**复查**：见 [日志](https://example.com/log)\\"]}"',
         '',
         '# 接口自描述：GET http://127.0.0.1:' + info.port + '/api/schema'
     ].join('\n');

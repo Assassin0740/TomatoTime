@@ -393,7 +393,7 @@
         <div class="notes-container">
             <!-- 核心输入区：只保留最高频的录入操作 -->
             <div class="note-input-wrapper">
-                <div id="noteInput" class="note-input" contenteditable="true" placeholder="输入本次任务…"></div>
+                <div id="noteInput" class="note-input" contenteditable="true" placeholder="输入本次任务…（支持 **粗体**  *斜体*  # 大标题  - 列表）" title="支持 Markdown：**粗体**  *斜体*  ~~删除线~~  `代码`  # 大标题  - 列表  1. 编号  > 引用  [文字](https://链接)"></div>
                 <div class="priority-row">
                     <div class="priority-btn p1 active" data-p="1">① 不紧急</div>
                     <div class="priority-btn p2" data-p="2">② 中等</div>
@@ -541,6 +541,7 @@
     </div>
 
         <script src="bridge.js"></script>
+        <script src="clipboard-table.js"></script>
         <script src="renderer.js"></script>
     
     <!-- 微信风格图片预览 Modal -->

@@ -1,12 +1,12 @@
 {
   "name": "timer-app",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "专注计时器 · 悬浮窗 + 任务管理 + 本地 AI 接入 API + 表格 WebHook 同步",
   "author": "廖中钰",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js",
+    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js",
     "build": "electron-builder",
     "build:dir": "electron-builder --dir",
     "deploy:local": "node scripts/deploy-local.js"
@@ -23,6 +23,8 @@
       "store.js",
       "preload.js",
       "renderer.js",
+      "clipboard-table.js",
+      "sync-client.js",
       "style.css",
       "计时器.html",
       "float.html",
