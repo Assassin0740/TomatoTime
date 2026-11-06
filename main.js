@@ -2071,7 +2071,14 @@ ipcMain.handle('workbench:open', async (event, input) => {
         const target = (input && input.target) || '';
         const p = toLocalPath(target);
         if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
-        const url = 'workbench://open?path=' + encodeURIComponent(p);
+
+        // 【CR-028】可以指定落到哪个内嵌应用：计时器右键图片时传 app=<craft id>。
+        // 渲染层原来传的 provider 只是 'workbench'（来源标记），不是应用 id，别拿来当 app。
+        let app = (input && input.app) || '';
+        if (!app && input && input.provider && input.provider !== 'workbench') app = input.provider;
+        const q = ['path=' + encodeURIComponent(p)];
+        if (app) q.push('app=' + encodeURIComponent(app));
+        const url = 'workbench://open?' + q.join('&');
 
         const exe = locateWorkbench();
         if (exe) {

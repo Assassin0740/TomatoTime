@@ -2243,6 +2243,73 @@
             return parseInt(el.getAttribute('data-note-id'));
         }
 
+        // 【2026-11-06 CR-028】便签正文里粘贴的 <img> 右键，也要能送进创作台的内嵌应用。
+        // 之前只有附件 chip（.note-file-chip）接了 provider 表，正文图片右键菜单里
+        // 只有「复制图片 / 推送到表格」，用户自然觉得「打不开刚刚说的那些软件」。
+        // 这里的 id 必须与创作台 crafts.js 一致 —— 那边用 CraftApps.get(app) 找应用。
+        const NOTE_IMAGE_CRAFTS = [
+            { id: 'photocraft', name: 'PhotoCraft', hint: '图层修图' },
+            { id: 'vectorcraft', name: 'VectorCraft', hint: '矢量绘制' },
+            { id: 'designcraft', name: 'DesignCraft', hint: '版式排版' }
+        ];
+
+        /** 把便签图片变成主进程能交给外部程序的本地地址（内联 base64 要先落盘） */
+        async function noteImageToLocalFile(img) {
+            const src = img && (img.getAttribute('data-src') || img.getAttribute('src') || '');
+            if (!src) return '';
+            const ipc = getIpc();
+            if (!ipc) return '';
+            if (/^data:(image|video|audio)\//i.test(src)) return await ipc.invoke('save-note-image', src);
+            if (/^https?:/i.test(src)) return await ipc.invoke('save-note-image-source', { url: src });
+            // file:// 与本地绝对路径主进程的 toLocalPath 能直接吃
+            return src;
+        }
+
+        async function openNoteImageInCraft(img, appId) {
+            const ipc = getIpc();
+            if (!ipc) { showAppToast('网页版不支持唤起本地程序'); return; }
+            try {
+                showAppToast('正在准备图片…');
+                const local = await noteImageToLocalFile(img);
+                if (!local) { showAppToast('这张图片还没有保存，无法交给外部应用'); return; }
+                const res = await ipc.invoke('workbench:open', { target: local, app: appId || '' });
+                if (res && res.ok) showAppToast(appId ? '已在创作台启动编辑器' : '已在创作台打开');
+                else showAppToast((res && res.error) || '创作台没找到，先运行一次');
+            } catch (e) {
+                showAppToast('打开失败：' + ((e && e.message) || String(e)));
+            }
+        }
+
+        function fillCraftMenu(img) {
+            const group = document.getElementById('craftOpenGroup');
+            const sep = document.getElementById('craftOpenSep');
+            if (!group) return;
+            group.innerHTML = '';
+            const show = !!img;
+            if (sep) sep.style.display = show ? 'block' : 'none';
+            if (!show) return;
+            const add = (label, hint, appId) => {
+                const item = document.createElement('div');
+                item.className = 'context-menu-item';
+                item.textContent = label;
+                if (hint) {
+                    const s = document.createElement('span');
+                    s.className = 'craft-menu-hint';
+                    s.textContent = hint;
+                    item.appendChild(s);
+                }
+                item.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const m = document.getElementById('contextMenu');
+                    if (m) m.classList.remove('show');
+                    openNoteImageInCraft(img, appId);
+                });
+                group.appendChild(item);
+            };
+            NOTE_IMAGE_CRAFTS.forEach(c => add('用 ' + c.name + ' 打开', c.hint, c.id));
+            add('在创作台中打开', '定位文件', '');
+        }
+
         document.addEventListener('contextmenu', (e) => {
             const target = e.target;
             const editable = target.closest('.note-content-editable, .table-content');
@@ -2251,6 +2318,7 @@
             e.preventDefault();
             currentEditableElement = editable;
             currentContextImage = target.tagName === 'IMG' ? target : null;
+            fillCraftMenu(currentContextImage);
 
             const menu = document.getElementById('contextMenu');
             const copyItem = document.getElementById('copyImageItem');
