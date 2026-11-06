@@ -222,7 +222,7 @@
             font-size: 24px;
             border: 4px dashed #00a1d6;
         `;
-        dropZone.textContent = '拖放 JSON 文件到此处导入笔记';
+        dropZone.textContent = '松手即可：JSON 导入笔记 ｜ 其它文件（Word / PPT / APK / ZIP…）直接放进当前输入框';
         document.body.appendChild(dropZone);
 
         const importDialog = document.createElement('div');
@@ -411,18 +411,50 @@
             }
         });
 
-        document.addEventListener('drop', e => {
+        document.addEventListener('drop', async e => {
             e.preventDefault();
             e.stopPropagation();
             dropZone.style.display = 'none';
             isDragOver = false;
             
-            const file = e.dataTransfer.files[0];
-            if (!file || !file.name.endsWith('.json')) {
-                alert('请拖放 JSON 文件');
+            const dropped = Array.from(e.dataTransfer.files || []);
+            if (!dropped.length) return;
+
+            // 【2026-11-06】拖进来的不是备份文件 → 当附件放进输入框：
+            // 图片 / 视频仍按内联媒体处理，其它（Word / PPT / APK / ZIP…）落成附件标签。
+            const jsonFiles = dropped.filter(f => /\.json$/i.test(f.name || ''));
+            if (!jsonFiles.length) {
+                const target = document.getElementById('noteInput');
+                const mediaItems = [];
+                const attachments = [];
+                for (const f of dropped) {
+                    const isImg = f.type && /^image\//i.test(f.type);
+                    const isVid = f.type && /^video\//i.test(f.type);
+                    if (isImg || isVid) {
+                        const url = await localizeMediaFile(f);
+                        if (url) mediaItems.push({ type: isImg ? 'image' : 'video', src: url, alreadyLocal: true });
+                        continue;
+                    }
+                    if (!getIpc() || !f.path) {
+                        showAppToast('这个文件拿不到原始路径，无法保存');
+                        continue;
+                    }
+                    try {
+                        const info = await getIpc().invoke('file:save-from-path', f.path);
+                        if (info && info.url) attachments.push(info);
+                    } catch (err) {
+                        showAppToast('文件保存失败：' + (err && err.message ? err.message : err));
+                    }
+                }
+                if (mediaItems.length) await insertRichClipboardContent(target, mediaItems, []);
+                if (attachments.length) insertFilesIntoEditable(target, attachments);
+                if (mediaItems.length || attachments.length) {
+                    showAppToast('已放入 ' + (mediaItems.length + attachments.length) + ' 个文件');
+                }
                 return;
             }
-            
+
+            const file = jsonFiles[0];
             const r = new FileReader();
             r.onload = e => {
                 try {
@@ -1330,6 +1362,9 @@
                             return;
                         }
                         if (SKIP[child.tagName]) return;
+                        // 【2026-11-06】附件标签里的文件名 / 大小不参与 markdown 增强，
+                        // 否则文件名带 _ * # 会被渲染成斜体、标题，标签就散了
+                        if (child.classList && child.classList.contains('note-file-chip')) return;
                         // AI / 接口写进来的内容可能直接是 HTML 标题、链接：
                         // 换成和 markdown 一样的样式，避免 <h1> 按浏览器默认尺寸把卡片撑爆
                         if (/^H[1-6]$/.test(child.tagName)) {
@@ -2932,6 +2967,343 @@
             return true;
         }
 
+        /* ==================== 任意附件（2026-11-06） ====================
+         * 任务里可以放 Word / PPT / PDF / APK / ZIP…任何文件：
+         *  · 粘贴（资源管理器复制的文件）或点「📎 文件」按钮都能放进来
+         *  · 落成一个不可编辑的附件标签，显示文件名 + 大小，点击用系统默认程序打开
+         *  · ZIP 系（含 APK / DOCX / PPTX）点开先看内部清单，里面的图片可直接预览
+         */
+        function getIpc() {
+            if (typeof require === 'undefined') return null;
+            try { return require('electron').ipcRenderer; } catch (e) { return null; }
+        }
+
+        function formatBytes(n) {
+            const v = Number(n) || 0;
+            if (v < 1024) return v + ' B';
+            if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+            if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+            return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        }
+
+        function fileBadgeText(name, isArchive) {
+            const m = /\.([a-z0-9]{1,6})$/i.exec(String(name || ''));
+            if (m) return m[1].toUpperCase();
+            return isArchive ? 'ZIP' : 'FILE';
+        }
+
+        function createFileChip(info) {
+            const chip = document.createElement('span');
+            chip.className = 'note-file-chip';
+            chip.contentEditable = 'false';
+            chip.draggable = false;
+            chip.setAttribute('data-file', info.url || '');
+            chip.setAttribute('data-name', info.name || '未命名文件');
+            chip.setAttribute('data-size', String(info.size || 0));
+            if (info.archive) chip.setAttribute('data-archive', '1');
+            chip.setAttribute('title', info.archive ? '点击预览压缩包内容' : '点击用默认程序打开');
+
+            const badge = document.createElement('span');
+            badge.className = 'nf-badge';
+            badge.textContent = fileBadgeText(info.name, info.archive);
+
+            const main = document.createElement('span');
+            main.className = 'nf-main';
+            const nameEl = document.createElement('span');
+            nameEl.className = 'nf-name';
+            nameEl.textContent = info.name || '未命名文件';
+            const meta = document.createElement('span');
+            meta.className = 'nf-size';
+            meta.textContent = formatBytes(info.size) + (info.archive ? ' · 点击查看内容' : '');
+            main.appendChild(nameEl);
+            main.appendChild(meta);
+
+            chip.appendChild(badge);
+            chip.appendChild(main);
+            return chip;
+        }
+
+        /** 把附件标签插到当前光标处（笔记输入框 / 任务卡片 / 表格单元格都适用） */
+        function insertFilesIntoEditable(editable, infos) {
+            if (!editable || !infos || !infos.length) return false;
+            if (editable.isConnected === false) return false;
+            const sel = window.getSelection();
+            editable.focus();
+            let range = null;
+            if (sel && sel.rangeCount > 0) {
+                const r = sel.getRangeAt(0);
+                if (editable.contains(r.commonAncestorContainer)) range = r;
+            }
+            if (!range) {
+                range = document.createRange();
+                range.selectNodeContents(editable);
+                range.collapse(false);
+            }
+            if (!range.collapsed) range.deleteContents();
+
+            const frag = document.createDocumentFragment();
+            infos.forEach(info => {
+                frag.appendChild(createFileChip(info));
+                frag.appendChild(document.createElement('br'));
+            });
+            const last = frag.lastChild;
+            range.insertNode(frag);
+            if (last && last.parentNode && sel) {
+                const after = document.createRange();
+                after.setStartAfter(last);
+                after.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(after);
+            }
+
+            const isTableContent = editable.classList && editable.classList.contains('table-content');
+            if (editable.id !== 'noteInput' && !isTableContent) persistEditable(editable);
+            if (editable.id === 'noteInput') updateInputPlaceholder(editable);
+            return true;
+        }
+
+        async function openAttachment(url) {
+            const ipc = getIpc();
+            if (!ipc) { showAppToast('网页版不支持直接打开本地文件'); return; }
+            const res = await ipc.invoke('file:open', url);
+            if (!res || !res.ok) showAppToast('打开失败：' + ((res && res.error) || '未知错误'));
+        }
+
+        async function revealAttachment(url) {
+            const ipc = getIpc();
+            if (!ipc) { showAppToast('网页版不支持定位本地文件'); return; }
+            const res = await ipc.invoke('file:reveal', url);
+            if (!res || !res.ok) showAppToast('定位失败：' + ((res && res.error) || '未知错误'));
+        }
+
+        /** 附件标签上右键的小菜单：打开 / 在文件夹中显示 / 移除引用 */
+        function showFileChipMenu(chip, x, y) {
+            const old = document.getElementById('fileChipMenu');
+            if (old) old.remove();
+            const menu = document.createElement('div');
+            menu.id = 'fileChipMenu';
+            menu.className = 'file-chip-menu';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const addItem = (label, fn) => {
+                const item = document.createElement('div');
+                item.className = 'file-chip-menu-item';
+                item.textContent = label;
+                item.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    menu.remove();
+                    fn();
+                });
+                menu.appendChild(item);
+            };
+            const url = chip.getAttribute('data-file');
+            const isArchive = chip.getAttribute('data-archive') === '1';
+            if (isArchive) addItem('查看压缩包内容', () => openArchivePreview(url, chip.getAttribute('data-name')));
+            addItem('用默认程序打开', () => openAttachment(url));
+            addItem('在文件夹中显示', () => revealAttachment(url));
+            addItem('移除引用（不删原文件）', () => {
+                const host = chip.parentNode;
+                chip.remove();
+                if (host && host.id !== 'noteInput') {
+                    const editable = host.closest ? host.closest('[contenteditable="true"]') : null;
+                    if (editable) persistEditable(editable);
+                }
+                showAppToast('已移除引用，文件仍保留在本库');
+            });
+
+            document.body.appendChild(menu);
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth - 8) menu.style.left = Math.max(8, window.innerWidth - rect.width - 8) + 'px';
+            if (rect.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, window.innerHeight - rect.height - 8) + 'px';
+        }
+
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('fileChipMenu');
+            if (menu && !menu.contains(e.target)) menu.remove();
+            const chip = e.target && e.target.closest ? e.target.closest('.note-file-chip') : null;
+            if (!chip) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const url = chip.getAttribute('data-file');
+            if (chip.getAttribute('data-archive') === '1') {
+                openArchivePreview(url, chip.getAttribute('data-name'));
+            } else {
+                openAttachment(url);
+            }
+        }, true);
+
+        document.addEventListener('contextmenu', (e) => {
+            const chip = e.target && e.target.closest ? e.target.closest('.note-file-chip') : null;
+            if (!chip) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showFileChipMenu(chip, e.clientX, e.clientY);
+        }, true);
+
+        /** 压缩包预览弹窗（懒创建，只建一次） */
+        function ensureArchiveModal() {
+            let modal = document.getElementById('archiveModal');
+            if (modal) return modal;
+            modal = document.createElement('div');
+            modal.id = 'archiveModal';
+            modal.className = 'archive-modal';
+            modal.innerHTML =
+                '<div class="archive-dialog">' +
+                    '<div class="archive-head">' +
+                        '<span class="archive-title" id="archiveTitle">压缩包</span>' +
+                        '<span class="archive-sub" id="archiveSub"></span>' +
+                        '<button class="archive-close" id="archiveCloseBtn" title="关闭">✕</button>' +
+                    '</div>' +
+                    '<div class="archive-body">' +
+                        '<div class="archive-list" id="archiveList"></div>' +
+                        '<div class="archive-preview" id="archivePreview">' +
+                            '<div class="archive-empty">从左侧选一个文件，图片和文本可以直接看</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('click', (ev) => {
+                if (ev.target === modal) modal.classList.remove('show');
+            });
+            modal.querySelector('#archiveCloseBtn').addEventListener('click', () => modal.classList.remove('show'));
+            document.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape' && modal.classList.contains('show')) modal.classList.remove('show');
+            });
+            return modal;
+        }
+
+        let archiveCurrentUrl = '';
+
+        async function openArchivePreview(url, name) {
+            const ipc = getIpc();
+            if (!ipc) { showAppToast('网页版不支持预览压缩包'); return; }
+            const modal = ensureArchiveModal();
+            const listEl = modal.querySelector('#archiveList');
+            const previewEl = modal.querySelector('#archivePreview');
+            const titleEl = modal.querySelector('#archiveTitle');
+            const subEl = modal.querySelector('#archiveSub');
+            archiveCurrentUrl = url;
+            titleEl.textContent = name || '压缩包';
+            subEl.textContent = '正在读取…';
+            listEl.textContent = '';
+            previewEl.innerHTML = '<div class="archive-empty">加载中…</div>';
+            modal.classList.add('show');
+
+            let res;
+            try {
+                res = await ipc.invoke('archive:list', url);
+            } catch (err) {
+                res = { ok: false, error: err.message };
+            }
+            if (!res || !res.ok) {
+                subEl.textContent = '';
+                previewEl.innerHTML = '<div class="archive-empty">读取失败：' + (res && res.error ? res.error : '未知错误') + '</div>';
+                return;
+            }
+            const s = res.summary || {};
+            subEl.textContent = '共 ' + (s.files || 0) + ' 个文件 · ' +
+                (s.dirs ? s.dirs + ' 个目录 · ' : '') + formatBytes(s.totalSize || 0) +
+                (res.truncated ? ' · 条目过多只显示前 4000 条' : '');
+
+            const rows = (res.entries || []).slice().sort((a, b) => {
+                if (a.dir !== b.dir) return a.dir ? -1 : 1;
+                return a.name.localeCompare(b.name, 'zh-CN');
+            });
+            const frag = document.createDocumentFragment();
+            rows.forEach(en => {
+                const row = document.createElement('div');
+                row.className = 'archive-row' + (en.dir ? ' is-dir' : '');
+                const icon = document.createElement('span');
+                icon.className = 'archive-icon';
+                icon.textContent = en.dir ? '📁' : (en.kind === 'image' ? '🖼' : (en.kind === 'text' ? '📄' : '📦'));
+                const nm = document.createElement('span');
+                nm.className = 'archive-name';
+                const parts = String(en.name).replace(/\/$/, '').split('/');
+                nm.textContent = parts[parts.length - 1];
+                nm.title = en.name;
+                const sz = document.createElement('span');
+                sz.className = 'archive-size';
+                sz.textContent = en.dir ? '' : formatBytes(en.size);
+                row.appendChild(icon);
+                row.appendChild(nm);
+                row.appendChild(sz);
+                if (!en.dir) {
+                    row.addEventListener('click', () => {
+                        Array.from(listEl.querySelectorAll('.archive-row.active')).forEach(r => r.classList.remove('active'));
+                        row.classList.add('active');
+                        previewArchiveEntry(en, previewEl);
+                    });
+                }
+                frag.appendChild(row);
+            });
+            listEl.appendChild(frag);
+            previewEl.innerHTML = rows.some(r => !r.dir)
+                ? '<div class="archive-empty">从左侧选一个文件，图片和文本可以直接看</div>'
+                : '<div class="archive-empty">这个压缩包是空的</div>';
+        }
+
+        async function previewArchiveEntry(entry, previewEl) {
+            const ipc = getIpc();
+            if (!ipc) return;
+            if (entry.encrypted) {
+                previewEl.innerHTML = '<div class="archive-empty">该文件已加密，无法预览</div>';
+                return;
+            }
+            if (entry.kind !== 'image' && entry.kind !== 'text') {
+                previewEl.innerHTML = '<div class="archive-empty">' +
+                    '<div style="font-size:13px;margin-bottom:6px;">' + entry.name.replace(/</g, '&lt;') + '</div>' +
+                    '<div>该类型暂不支持预览（' + formatBytes(entry.size) + '），可以解压后用默认程序打开</div>' +
+                    '</div>';
+                return;
+            }
+            previewEl.innerHTML = '<div class="archive-empty">读取中…</div>';
+            let res;
+            try {
+                res = await ipc.invoke('archive:entry', { url: archiveCurrentUrl, name: entry.name });
+            } catch (err) {
+                res = { ok: false, error: err.message };
+            }
+            if (!res || !res.ok) {
+                previewEl.innerHTML = '<div class="archive-empty">预览失败：' + (res && res.error ? res.error : '未知错误') + '</div>';
+                return;
+            }
+            previewEl.textContent = '';
+            if (res.kind === 'image') {
+                const img = document.createElement('img');
+                img.src = res.dataUrl;
+                img.className = 'archive-img';
+                img.title = entry.name;
+                previewEl.appendChild(img);
+                const cap = document.createElement('div');
+                cap.className = 'archive-caption';
+                cap.textContent = entry.name + ' · ' + formatBytes(res.size || entry.size);
+                previewEl.appendChild(cap);
+                return;
+            }
+            const pre = document.createElement('pre');
+            pre.className = 'archive-text';
+            pre.textContent = res.text || '';
+            previewEl.appendChild(pre);
+        }
+
+        /** 点「📎 文件」：选本地文件 → 入库 → 插到当前光标处 */
+        async function pickFilesIntoEditable(editable) {
+            const ipc = getIpc();
+            if (!ipc) { showAppToast('网页版不支持插入本地文件'); return; }
+            const res = await ipc.invoke('file:pick');
+            if (!res || res.canceled) return;
+            if (!res.files || !res.files.length) {
+                showAppToast('没有可插入的文件' + (res.errors && res.errors.length ? '：' + res.errors[0] : ''));
+                return;
+            }
+            const target = editable && editable.isConnected !== false ? editable : document.getElementById('noteInput');
+            insertFilesIntoEditable(target, res.files);
+            showAppToast('已插入 ' + res.files.length + ' 个文件' +
+                (res.errors && res.errors.length ? '（' + res.errors.length + ' 个失败）' : ''));
+        }
+
+
         /** RTF 转义：中文用 \uN? 形式，保证 Word / WPS / 企业微信富文本框能识别 */
         function escapeRtfText(text) {
             return String(text || '')
@@ -3001,6 +3373,10 @@
             const fileImgs = Array.from(cd.files || []).filter(f => f.type && f.type.startsWith('image/'));
             // 【2026-11-06】视频文件：资源管理器复制 mp4 / 网页视频，和图片一样收进媒体库
             const fileVideos = Array.from(cd.files || []).filter(f => f.type && /^video\//i.test(f.type));
+            // 【2026-11-06】其它任意文件（Word / PPT / APK / ZIP…）：只认带真实路径的，
+            // 没有 path 的来源（浏览器、部分 IM）拿不到原文件，交给后面的分支按普通内容处理。
+            const otherFiles = Array.from(cd.files || []).filter(f =>
+                f && f.path && !(f.type && (/^image\//i.test(f.type) || /^video\//i.test(f.type))));
             const htmlSrcs = extractImgSrcs(html);
             const htmlVideoSrcs = extractVideoSrcs(html);
             // 【2026-11-05】腾讯文档 / 在线表格的表格数据在 text/html 或 TSV 里，
@@ -3018,6 +3394,26 @@
                     await insertTableIntoEditable(editable, tableData);
                     return;
                 }
+
+                // ⓪-B 【2026-11-06】任意文件（Word / PPT / PDF / APK / ZIP…）：
+                //      资源管理器 Ctrl+C 一个文件再粘贴过来，走这条；图片 / 视频有专门的通路，这里排除掉。
+                if (otherFiles.length && getIpc()) {
+                    const infos = [];
+                    for (const file of otherFiles) {
+                        try {
+                            const info = await getIpc().invoke('file:save-from-path', file.path);
+                            if (info && info.url) infos.push(info);
+                        } catch (err) {
+                            showAppToast('文件保存失败：' + (err && err.message ? err.message : err));
+                        }
+                    }
+                    if (infos.length && stillThere()) {
+                        insertFilesIntoEditable(editable, infos);
+                        showAppToast('已插入 ' + infos.length + ' 个文件');
+                        return;
+                    }
+                }
+
 
                 // ① 剪贴板里直接带图片 / 视频文件，或 HTML 里带图 / 视频（截图工具、资源管理器、网页、企业微信图文）
                 if (fileImgs.length || htmlSrcs.length || fileVideos.length || htmlVideoSrcs.length) {
@@ -3517,7 +3913,7 @@
         };
 
         function updateInputPlaceholder(el) {
-            const hasMedia = el.querySelectorAll('img, video').length > 0;
+            const hasMedia = el.querySelectorAll('img, video, .note-file-chip').length > 0;
             if (!el.innerText.trim() && !hasMedia) {
                 el.setAttribute('data-has-content', 'false');
             } else {
@@ -3544,6 +3940,16 @@
             notes = notes.filter(x => x.id !== id);
             save();
         };
+
+        // 【2026-11-06】插入文件：Word / PPT / PDF / APK / ZIP…都行
+        const pickFileBtn = document.getElementById('pickFileBtn');
+        if (pickFileBtn) {
+            pickFileBtn.onclick = (e) => {
+                if (e) e.preventDefault();
+                const input = document.getElementById('noteInput');
+                pickFilesIntoEditable(input && input.isConnected !== false ? input : null);
+            };
+        }
 
         document.getElementById('addNoteBtn').onclick = () => {
             const noteInput = document.getElementById('noteInput');

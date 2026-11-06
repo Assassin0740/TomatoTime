@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, Tray, dialog,
+const { app, BrowserWindow, Menu, ipcMain, Tray, dialog, shell,
     globalShortcut, clipboard, nativeImage, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const nodeUrl = require('url');
 const store = require('./store');
 const mediaFormat = require('./media-format');
+const archive = require('./archive');
 const { createApiServer } = require('./api-server');
 const { createWebhook, DEFAULT_WEBHOOK_CONFIG } = require('./webhook');
 
@@ -48,6 +49,9 @@ let trayCreated = false;
 const configPath = path.join(app.getPath('userData'), 'floatWindowConfig.json');
 const customDrawsPath = path.join(app.getPath('userData'), 'CustomDraws');
 const noteImagesPath = path.join(app.getPath('userData'), 'NoteImages');
+// 【2026-11-06】任意附件（Word / PPT / APK / ZIP…）单独一个目录：
+// 不跟图片混在一起，图片 GC 不会误伤附件，附件也不会被当成图片扫。
+const noteFilesPath = path.join(app.getPath('userData'), 'NoteFiles');
 const mainSettingsPath = path.join(app.getPath('userData'), 'main-settings.json');
 
 /**
@@ -1717,6 +1721,199 @@ ipcMain.handle('save-note-image-source', async (event, input) => {
     } catch (e) {
         console.error('保存外部图片失败:', e);
         throw e;
+    }
+});
+
+/* ==================== 任意附件（2026-11-06） ====================
+ * Word / PPT / PDF / APK / ZIP… 用户想放什么就放什么：
+ *  · 单文件上限 1GB（再大就不是「随手记」的场景了）
+ *  · 按内容 SHA-256 去重，同一份文件只占一份磁盘
+ *  · 文件名保留原样，只在磁盘上用 f_<hash> 存储，界面显示原名
+ *  · ZIP 系（含 APK / DOCX / XLSX / PPTX）额外支持「点进去看内部清单 + 图片预览」
+ */
+const MAX_ATTACH_BYTES = 1024 * 1024 * 1024;
+const ARCHIVE_PREVIEW_BYTES = 300 * 1024 * 1024;
+
+function toLocalPath(target) {
+    const s = String(target || '');
+    if (!s) return '';
+    if (s.indexOf('file://') === 0) {
+        try { return nodeUrl.fileURLToPath(s); } catch (e) { return ''; }
+    }
+    return s;
+}
+
+/** 只看文件头 4 字节判断是不是 ZIP 系，不读整个文件 */
+function detectArchive(localPath) {
+    try {
+        const fd = fs.openSync(localPath, 'r');
+        try {
+            const head = Buffer.alloc(4);
+            const n = fs.readSync(fd, head, 0, 4, 0);
+            return n === 4 && archive.isZip(head);
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch (e) {
+        return false;
+    }
+}
+
+/** 附件入库：流式算哈希（大文件不进内存），同内容复用已有文件 */
+function saveAttachmentFromPath(filePath) {
+    const p = toLocalPath(filePath);
+    if (!p) throw new Error('文件路径为空');
+    const stat = fs.statSync(p);
+    if (!stat.isFile()) throw new Error('不是一个文件：' + p);
+    if (stat.size > MAX_ATTACH_BYTES) {
+        throw new Error('文件超过 ' + Math.round(MAX_ATTACH_BYTES / 1024 / 1024) + 'MB，未保存');
+    }
+    if (!fs.existsSync(noteFilesPath)) fs.mkdirSync(noteFilesPath, { recursive: true });
+
+    const hash = crypto.createHash('sha256');
+    const fd = fs.openSync(p, 'r');
+    try {
+        const chunk = Buffer.alloc(1024 * 1024);
+        let read;
+        while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+            hash.update(chunk.subarray(0, read));
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+
+    let ext = path.extname(p).replace('.', '').toLowerCase();
+    if (!/^[a-z0-9]{1,12}$/.test(ext)) ext = '';
+    const fileName = 'f_' + hash.digest('hex').slice(0, 32) + (ext ? '.' + ext : '');
+    const target = path.join(noteFilesPath, fileName);
+    if (!fs.existsSync(target)) fs.copyFileSync(p, target);
+
+    return {
+        url: nodeUrl.pathToFileURL(target).href,
+        name: path.basename(p),
+        size: stat.size,
+        ext: ext,
+        archive: detectArchive(target)
+    };
+}
+
+/** 压缩包读取缓存：同一个包连续点条目时不用重复读盘 */
+let archiveCache = null;
+function loadArchive(localPath) {
+    const stat = fs.statSync(localPath);
+    if (!stat.isFile()) throw new Error('压缩包不存在');
+    if (archiveCache && archiveCache.path === localPath &&
+        archiveCache.size === stat.size && archiveCache.mtimeMs === stat.mtimeMs) {
+        return archiveCache;
+    }
+    if (stat.size > ARCHIVE_PREVIEW_BYTES) {
+        throw new Error('压缩包超过 ' + Math.round(ARCHIVE_PREVIEW_BYTES / 1024 / 1024) +
+            'MB，暂不预览（可以直接用默认程序打开）');
+    }
+    const buf = fs.readFileSync(localPath);
+    const entries = archive.listEntries(buf);
+    archiveCache = { path: localPath, size: stat.size, mtimeMs: stat.mtimeMs, buf: buf, entries: entries };
+    return archiveCache;
+}
+
+const ENTRY_TEXT_EXT = /^(txt|md|markdown|json|xml|html|htm|css|js|ts|log|csv|tsv|ini|yml|yaml)$/i;
+const ENTRY_IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i;
+
+function entryKind(name) {
+    const ext = String(name).split('.').pop().toLowerCase();
+    if (ENTRY_IMAGE_EXT.test(ext)) return 'image';
+    if (ENTRY_TEXT_EXT.test(ext)) return 'text';
+    return 'other';
+}
+
+// 选文件 → 入库（桌面端「插入文件」按钮）
+ipcMain.handle('file:pick', async (event) => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+        title: '选择要插入的文件',
+        properties: ['openFile', 'multiSelections']
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true, files: [] };
+    const files = [];
+    const errors = [];
+    for (const p of res.filePaths) {
+        try {
+            files.push(saveAttachmentFromPath(p));
+        } catch (e) {
+            errors.push(path.basename(p) + '：' + e.message);
+        }
+    }
+    return { ok: files.length > 0, canceled: false, files: files, errors: errors };
+});
+
+// 粘贴 / 拖入的文件（渲染进程拿到 File 对象后传真实路径）
+ipcMain.handle('file:save-from-path', async (event, input) => {
+    const p = typeof input === 'string' ? input : (input && input.path);
+    return saveAttachmentFromPath(p);
+});
+
+// 用系统默认程序打开附件
+ipcMain.handle('file:open', async (event, target) => {
+    const p = toLocalPath(target);
+    if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
+    const err = await shell.openPath(p);
+    return err ? { ok: false, error: err } : { ok: true };
+});
+
+// 在资源管理器里定位附件
+ipcMain.handle('file:reveal', async (event, target) => {
+    const p = toLocalPath(target);
+    if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
+    shell.showItemInFolder(p);
+    return { ok: true };
+});
+
+// 列出压缩包内部条目
+ipcMain.handle('archive:list', async (event, target) => {
+    try {
+        const p = toLocalPath(target);
+        const cache = loadArchive(p);
+        const summary = archive.summarize(cache.entries);
+        return {
+            ok: true,
+            name: path.basename(p),
+            summary: summary,
+            truncated: cache.entries.length >= archive.MAX_ENTRIES,
+            entries: cache.entries.map(e => ({
+                name: e.name,
+                dir: e.dir,
+                size: e.size,
+                encrypted: e.encrypted,
+                kind: e.dir ? 'dir' : entryKind(e.name)
+            }))
+        };
+    } catch (e) {
+        return { ok: false, error: e.message || String(e) };
+    }
+});
+
+// 读取压缩包内单个条目：图片给 dataURL，文本给内容，其余只回元信息
+ipcMain.handle('archive:entry', async (event, input) => {
+    try {
+        const target = input && (input.url || input.path || input.target);
+        const name = input && input.name;
+        const cache = loadArchive(toLocalPath(target));
+        const entry = cache.entries.find(e => e.name === name);
+        if (!entry) return { ok: false, error: '压缩包里找不到这个条目' };
+        const data = archive.extractEntry(cache.buf, entry);
+        const kind = entryKind(entry.name);
+        if (kind === 'image') {
+            const mime = getMimeType(entry.name);
+            return { ok: true, kind: 'image', size: data.length,
+                dataUrl: 'data:' + mime + ';base64,' + data.toString('base64') };
+        }
+        if (kind === 'text') {
+            return { ok: true, kind: 'text', size: data.length,
+                text: data.subarray(0, 200 * 1024).toString('utf8') };
+        }
+        return { ok: true, kind: 'other', size: data.length };
+    } catch (e) {
+        return { ok: false, error: e.message || String(e) };
     }
 });
 
