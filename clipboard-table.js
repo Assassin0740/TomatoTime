@@ -62,21 +62,72 @@
             .replace(/'/g, '&#39;');
     }
 
-    /** 单元格 innerHTML → 纯文本：<br> 和块级结束标签转换行，其余标签剥掉 */
-    function cellText(raw) {
-        const text = decodeEntities(String(raw == null ? '' : raw)
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '')
-            .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<\/(p|div|li|h[1-6]|ul|ol|section|blockquote)>/gi, '\n')
-            .replace(/<[^>]*>/g, ''))
+    /** 取标签里的属性值（双引号 / 单引号 / 无引号都认），并做实体还原 */
+    function attrValue(tagHtml, name) {
+        const re = new RegExp(name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i');
+        const m = re.exec(String(tagHtml == null ? '' : tagHtml));
+        if (!m) return '';
+        const raw = m[1] != null ? m[1] : (m[2] != null ? m[2] : (m[3] || ''));
+        return decodeEntities(raw).trim();
+    }
+
+    /** 行内空白 / 连续空行清理（cellText 与 cellParts 共用同一套规则） */
+    function tidyText(text) {
+        return String(text == null ? '' : text)
             .replace(/\r/g, '')
-            .replace(/\u200b/g, '');
-        return text.split('\n')
+            .replace(/\u200b/g, '')
+            .split('\n')
             .map(line => line.replace(/[ \t]+$/g, '').replace(/^[ \t]+/g, ''))
             .join('\n')
             .replace(/\n{3,}/g, '\n\n')
             .replace(/^\n+|\n+$/g, '');
+    }
+
+    /** 单元格 innerHTML → 纯文本：<br> 和块级结束标签转换行，其余标签剥掉 */
+    function cellText(raw) {
+        return tidyText(decodeEntities(String(raw == null ? '' : raw)
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/(p|div|li|h[1-6]|ul|ol|section|blockquote)>/gi, '\n')
+            .replace(/<[^>]*>/g, '')));
+    }
+
+    /**
+     * 【2026-11-06】单元格内容拆成「文字 + 图片」有序片段。
+     * 腾讯文档的表格里经常整格都是图片（产品图、Icon、缩略图），旧实现只取 textContent，
+     * 图片被整体丢掉，粘进来就是一格空白。这里把 <img> 抠成占位符，剥完标签后再按原顺序还原。
+     * 返回 [{t:'text',v} | {t:'img',v:src}]，图片地址优先取 data-src（懒加载站点真实地址）。
+     */
+    const IMG_MARK = '\u0001';
+
+    function cellParts(raw) {
+        const parts = [];
+        if (raw == null || raw === '') return parts;
+        const imgs = [];
+        const marked = String(raw)
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '')
+            .replace(/<img\b[^>]*>/gi, tag => {
+                const src = attrValue(tag, 'data-src') || attrValue(tag, 'src');
+                if (!src) return '';
+                imgs.push(src);
+                return IMG_MARK + (imgs.length - 1) + IMG_MARK;
+            })
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/(p|div|li|h[1-6]|ul|ol|section|blockquote)>/gi, '\n')
+            .replace(/<[^>]*>/g, '');
+        const tokens = decodeEntities(marked).split(/\u0001(\d+)\u0001/);
+        tokens.forEach((chunk, i) => {
+            if (i % 2 === 1) {
+                const src = imgs[parseInt(chunk, 10)];
+                if (src) parts.push({ t: 'img', v: src });
+                return;
+            }
+            const text = tidyText(chunk);
+            if (text) parts.push({ t: 'text', v: text });
+        });
+        return parts;
     }
 
     function attrInt(attrs, name) {
@@ -86,8 +137,9 @@
     }
 
     /**
-     * 展开 colspan / rowspan，返回规整的二维文本矩阵。
+     * 展开 colspan / rowspan，返回规整的二维矩阵。
      * 合并单元格的值会填满它覆盖的所有格子：拆成普通表格后每一行都还能看到归属，不丢信息。
+     * 有图片的单元格输出 { text, imgs, parts } 对象，纯文字单元格仍是字符串（保持向后兼容）。
      */
     function expandCells(rawRows) {
         const grid = [];
@@ -102,7 +154,7 @@
                     if (!grid[r]) grid[r] = [];
                     for (let dc = 0; dc < cell.colspan; dc++) {
                         const c = col + dc;
-                        grid[r][c] = cell.text;
+                        grid[r][c] = cell;
                         occupied[r + ':' + c] = true;
                     }
                 }
@@ -112,9 +164,26 @@
         const cols = grid.reduce((mx, row) => Math.max(mx, row.length), 0);
         return grid.map(row => {
             const out = [];
-            for (let i = 0; i < cols; i++) out.push(row[i] == null ? '' : row[i]);
+            for (let i = 0; i < cols; i++) {
+                const cell = row[i];
+                if (!cell) { out.push(''); continue; }
+                if (cell.imgs && cell.imgs.length) {
+                    out.push({ text: cell.text, imgs: cell.imgs, parts: cell.parts });
+                } else {
+                    out.push(cell.text);
+                }
+            }
             return out;
         });
+    }
+
+    /** 单元格是否有内容：纯文字、只有图片、图文都算 */
+    function isFilled(c) {
+        if (c && typeof c === 'object') {
+            if (c.imgs && c.imgs.length) return true;
+            return String(c.text == null ? '' : c.text).trim() !== '';
+        }
+        return String(c == null ? '' : c).trim() !== '';
     }
 
     /** 从 text/html 里解析第一张数据表；非表格返回 null */
@@ -134,8 +203,13 @@
             const cellRe = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
             let td;
             while ((td = cellRe.exec(tr[1]))) {
+                // 【2026-11-06】单元格里的图片不再被丢弃：解析成有序「文字 + 图片」片段
+                const parts = cellParts(td[3]);
+                const imgs = parts.filter(p => p.t === 'img').map(p => p.v);
                 cells.push({
-                    text: cellText(td[3]),
+                    text: parts.filter(p => p.t === 'text').map(p => p.v).join('\n'),
+                    imgs: imgs,
+                    parts: imgs.length ? parts : null,
                     colspan: attrInt(td[2], 'colspan'),
                     rowspan: attrInt(td[2], 'rowspan')
                 });
@@ -146,7 +220,7 @@
 
         const rows = expandCells(rawRows);
         const cols = rows.reduce((mx, row) => Math.max(mx, row.length), 0);
-        const nonEmpty = rows.reduce((n, row) => n + row.filter(c => String(c).trim()).length, 0);
+        const nonEmpty = rows.reduce((n, row) => n + row.filter(isFilled).length, 0);
         // 网页布局用的单列 <table> / 空壳表格不当成数据表格
         if (cols < 2 || nonEmpty < 2) return null;
         return { rows: rows, rowCount: rows.length, cols: cols, source: 'html', hasHeader: hasHeader };
@@ -200,8 +274,18 @@
         return parseHtmlTable(html) || parseTsv(plain) || null;
     }
 
-    function cellHtml(text) {
-        return escapeHtmlText(text).replace(/\n/g, '<br>');
+    /** 单元格 → 可插入的 innerHTML：文字转义、换行转 <br>、图片保留为 <img> */
+    function cellHtml(cell) {
+        if (cell && typeof cell === 'object') {
+            if (cell.parts && cell.parts.length) {
+                return cell.parts.map(p => p.t === 'img'
+                    ? '<img class="pasted-cell-img" src="' + escapeHtmlText(p.v) + '" alt="">'
+                    : escapeHtmlText(p.v).replace(/\n/g, '<br>')
+                ).join('<br>');
+            }
+            return escapeHtmlText(cell.text == null ? '' : cell.text).replace(/\n/g, '<br>');
+        }
+        return escapeHtmlText(cell == null ? '' : cell).replace(/\n/g, '<br>');
     }
 
     /** 行列数据 → 应用内可编辑表格；外层 div 负责窄容器（表格视图单元格）的横向滚动 */
@@ -226,6 +310,7 @@
         decodeEntities: decodeEntities,
         escapeHtml: escapeHtmlText,
         cellText: cellText,
+        cellParts: cellParts,
         parseHtmlTable: parseHtmlTable,
         parseTsv: parseTsv,
         extract: extract,

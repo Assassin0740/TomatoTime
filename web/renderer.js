@@ -2844,11 +2844,38 @@
         }
 
         /**
+         * 【2026-11-06】表格单元格里的图片入库。
+         * 腾讯文档的表经常整格是图片，表格 HTML 里先带原始地址渲染出来，
+         * 再逐张收进本库换成 file:// —— 断网 / 原文档删图后表格里的图也不会裂。
+         */
+        async function localizeTableCellImages(editable) {
+            if (!editable || typeof editable.querySelectorAll !== 'function') return 0;
+            const imgs = Array.from(editable.querySelectorAll('img.pasted-cell-img:not([data-localized])'));
+            let done = 0;
+            for (const img of imgs) {
+                img.setAttribute('data-localized', '1');
+                img.style.display = 'block';
+                img.style.maxWidth = '100%';
+                img.style.maxHeight = '110px';
+                img.style.width = 'auto';
+                img.style.objectFit = 'contain';
+                img.style.borderRadius = '6px';
+                img.style.margin = '2px auto';
+                const src = img.getAttribute('src') || '';
+                if (!src || isLazyPlaceholder(src)) continue;
+                const url = await localizeImageSrc(src);
+                if (url && url !== src) img.src = url;
+                done++;
+            }
+            return done;
+        }
+
+        /**
          * 【2026-11-05】把解析好的表格插进任务内容（卡片 / 新建输入框 / 表格视图单元格）。
          * 生成的是真正的 <table>：单元格可直接点进去改，复制出去到 Word / 腾讯文档也还是表格。
          * 优先用 insertHTML 保留浏览器撤销栈；失败时退回 Range 插入，保证内容一定落地。
          */
-        function insertTableIntoEditable(editable, tableData) {
+        async function insertTableIntoEditable(editable, tableData) {
             const TableLib = getClipboardTable();
             if (!editable || editable.isConnected === false || !TableLib) return false;
             const html = TableLib.rowsToTableHtml(tableData) + '<br>';
@@ -2890,7 +2917,18 @@
             const isTableContent = editable.classList && editable.classList.contains('table-content');
             if (editable.id !== 'noteInput' && !isTableContent) persistEditable(editable);
             if (editable.id === 'noteInput') updateInputPlaceholder(editable);
-            showAppToast('已粘贴 ' + tableData.rowCount + ' 行 × ' + tableData.cols + ' 列表格');
+
+            // 【2026-11-06】单元格里的图片逐张入库；入库后要再落一次盘，否则存的还是远端地址
+            let mediaCount = 0;
+            if (/class="pasted-cell-img"/.test(html)) {
+                mediaCount = await localizeTableCellImages(editable);
+                if (mediaCount && editable.isConnected !== false &&
+                    editable.id !== 'noteInput' && !isTableContent) {
+                    persistEditable(editable);
+                }
+            }
+            showAppToast('已粘贴 ' + tableData.rowCount + ' 行 × ' + tableData.cols + ' 列表格' +
+                (mediaCount ? '（含 ' + mediaCount + ' 张图片）' : ''));
             return true;
         }
 
@@ -2977,7 +3015,7 @@
                 // ⓪ 表格粘贴：旧逻辑只认图片和纯文本，HTML 里的 <table> 被整段丢掉、
                 //    text/plain 只有 TSV 时也只粘成一堆挤在一起的字符。这里转成真表格。
                 if (tableData && stillThere()) {
-                    insertTableIntoEditable(editable, tableData);
+                    await insertTableIntoEditable(editable, tableData);
                     return;
                 }
 

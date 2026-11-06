@@ -96,10 +96,11 @@ test('XSS：剪贴板里的 script / 事件属性不会进入应用', () => {
         '<tr><td>2</td><td>3</td></tr></table>';
     const out = CT.rowsToTableHtml(CT.extract(evil, ''));
     assert.doesNotMatch(out, /<script/i);
-    assert.doesNotMatch(out, /onerror=/i);
-    assert.doesNotMatch(out, /<img/i);
+    assert.doesNotMatch(out, /onerror=/i, '事件属性必须剥掉（图片本身要保留）');
     assert.doesNotMatch(out, /alert\(/);
     assert.match(out, /<td>ok<\/td>/);
+    // 【2026-11-06】单元格图片改成保留，但只留 src，且必须转义
+    assert.match(out, /<img class="pasted-cell-img" src="x" alt="">/);
 });
 
 test('XSS：单元格里的尖括号与 & 被转义', () => {
@@ -131,4 +132,66 @@ test('单列多行但带 TSV 的剪贴板仍能按 TSV 还原', () => {
     assert.equal(data.source, 'tsv', 'HTML 不是数据表时应回退到 TSV');
     assert.equal(data.rowCount, 3);
     assert.deepEqual(data.rows[2], ['3', '4']);
+});
+
+/* ==================== 单元格图片（2026-11-06） ==================== */
+
+test('单元格图片：整格是图的表头不再变成空格子', () => {
+    const html = '<table>' +
+        '<tr><th><img src="https://cdn.example.com/logo.png"></th>' +
+        '<th><img src="https://cdn.example.com/cat1.png"></th>' +
+        '<th>UI/角色动画</th></tr>' +
+        '<tr><td>大金库</td><td>入场动画</td><td>已更新</td></tr>' +
+        '</table>';
+    const data = CT.extract(html, '');
+    assert.ok(data, '只有图片的表也应该被识别');
+    const head = data.rows[0][0];
+    assert.equal(typeof head, 'object', '有图片的单元格是对象');
+    assert.deepEqual(head.imgs, ['https://cdn.example.com/logo.png']);
+    assert.equal(head.text, '');
+
+    const out = CT.rowsToTableHtml(data);
+    assert.match(out, /<img class="pasted-cell-img" src="https:\/\/cdn\.example\.com\/logo\.png" alt="">/);
+    assert.match(out, /<img class="pasted-cell-img" src="https:\/\/cdn\.example\.com\/cat1\.png" alt="">/);
+    assert.match(out, /<th>UI\/角色动画<\/th>/, '纯文字格子仍是普通文本');
+});
+
+test('单元格图片：data-src 优先于 src（懒加载站点）', () => {
+    const html = '<table><tr><td><img src="data:image/gif;base64,R0lGOD" data-src="https://real.example.com/a.png"></td></tr>' +
+        '<tr><td>x</td><td>y</td></tr></table>';
+    const data = CT.extract(html, '');
+    assert.deepEqual(data.rows[0][0].imgs, ['https://real.example.com/a.png']);
+});
+
+test('单元格图文混排：按原文顺序输出文字和图片', () => {
+    const html = '<table><tr><td>文字A<img src="https://e.com/1.png">文字B</td><td>右</td></tr>' +
+        '<tr><td>下面</td><td>右2</td></tr></table>';
+    const cell = CT.extract(html, '').rows[0][0];
+    assert.deepEqual(cell.parts.map(p => p.t), ['text', 'img', 'text']);
+    assert.equal(cell.parts[0].v, '文字A');
+    assert.equal(cell.parts[2].v, '文字B');
+    const out = CT.rowsToTableHtml(CT.extract(html, ''));
+    assert.match(out, /文字A<br><img class="pasted-cell-img" src="https:\/\/e\.com\/1\.png" alt=""><br>文字B/);
+});
+
+test('单元格图片：多张图与属性里的引号都被安全处理', () => {
+    const html = '<table><tr><td><img alt="a" src="https://e.com/x.png"><img src="https://e.com/y.png"></td><td>c</td></tr>' +
+        '<tr><td>d</td><td>e</td></tr></table>';
+    const cell = CT.extract(html, '').rows[0][0];
+    assert.deepEqual(cell.imgs, ['https://e.com/x.png', 'https://e.com/y.png']);
+    assert.equal((CT.rowsToTableHtml(CT.extract(html, '')).match(/pasted-cell-img/g) || []).length, 2);
+});
+
+test('单元格图片：合并单元格里的图片会跟着铺满（不丢不叠）', () => {
+    const html = '<table><tr><td rowspan="2"><img src="https://e.com/m.png"></td><td>b</td></tr>' +
+        '<tr><td>c</td></tr></table>';
+    const data = CT.extract(html, '');
+    assert.deepEqual(data.rows[0][0].imgs, ['https://e.com/m.png']);
+    assert.deepEqual(data.rows[1][0].imgs, ['https://e.com/m.png']);
+});
+
+test('cellParts：纯文字单元格不会产出图片片段', () => {
+    assert.deepEqual(CT.cellParts('普通文字'), [{ t: 'text', v: '普通文字' }]);
+    assert.deepEqual(CT.cellParts(''), []);
+    assert.deepEqual(CT.cellParts(null), []);
 });

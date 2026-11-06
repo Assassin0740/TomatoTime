@@ -2630,6 +2630,19 @@
         .table-content .pasted-table th,
         .table-content .pasted-table td { padding: 3px 6px; min-width: 44px; }
 
+        /* 【2026-11-06】表格单元格里的图片：腾讯文档的表经常整格是产品图 / Icon，
+           这里限制高度、居中显示，避免一张图把整行撑成一张海报。 */
+        .pasted-table .pasted-cell-img {
+            display: block;
+            max-width: 100%;
+            max-height: 110px;
+            width: auto;
+            margin: 2px auto;
+            border-radius: 6px;
+            object-fit: contain;
+        }
+        .table-content .pasted-table .pasted-cell-img { max-height: 80px; }
+
         /* ==================== 视频（2026-11-06） ====================
            资源管理器 / 网页粘贴的 mp4 会入库成 <video controls>：
            和图片一样限制在卡片宽度内，表格视图里再收窄一些。 */
