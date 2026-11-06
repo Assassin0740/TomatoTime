@@ -1888,9 +1888,9 @@
                 canvas.addEventListener('mousedown', function(e) {
                     if (!isEditing || e.button !== 0) return;
                     isDrawing = true;
-                    const rect = canvas.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
+                    const pt = toCanvasPoint(e);
+                    const x = pt.x;
+                    const y = pt.y;
                     lastDrawPos = { x, y };
 
                     // 备份历史以供撤销
@@ -1904,9 +1904,9 @@
 
                 canvas.addEventListener('mousemove', function(e) {
                     if (!isDrawing || !isEditing) return;
-                    const rect = canvas.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
+                    const pt = toCanvasPoint(e);
+                    const x = pt.x;
+                    const y = pt.y;
 
                     ctx.strokeStyle = currentColor;
                     ctx.lineWidth = strokeWidth;
@@ -1985,18 +1985,40 @@
                 });
             }
 
+            // 屏幕坐标 → 画布像素坐标。
+            // 画布的 CSS 尺寸（100% 容器）和内部像素尺寸（canvas.width/height）是两个盒子，
+            // 只要有差异，直接拿 clientX-rect.left 当画布坐标就会整体偏移并按比例放大/缩小。
+            // 一律按 rect 的实际显示尺寸换算，两种尺寸是否相等都不影响正确性。
+            function toCanvasPoint(e) {
+                const rect = canvas.getBoundingClientRect();
+                const sx = rect.width ? canvas.width / rect.width : 1;
+                const sy = rect.height ? canvas.height / rect.height : 1;
+                return {
+                    x: (e.clientX - rect.left) * sx,
+                    y: (e.clientY - rect.top) * sy
+                };
+            }
+
             function enterEditMode(enter) {
                 isEditing = enter;
                 if (enter) {
+                    // 先切编辑态布局（底部给工具栏让位），再量尺寸
+                    viewport.classList.add('is-editing');
                     // 恢复 1.0 倍大小
                     currentScale = 1;
                     currentTranslate = { x: 0, y: 0 };
                     imgContainer.style.transition = '';
                     applyTransform();
+                    baseSize = { w: 0, h: 0 }; // 图片尺寸变了，基准尺寸作废
                     
-                    // 激活 Canvas 物理宽高（与大图在物理屏幕上显示的大小完美一致）
-                    canvas.width = modalImg.clientWidth;
-                    canvas.height = modalImg.clientHeight;
+                    // 激活 Canvas 物理宽高（与大图在物理屏幕上显示的大小完美一致）。
+                    // 用 getBoundingClientRect 而不是 clientWidth/clientHeight：
+                    // clientWidth 会取整，且它是图片自己的盒子；画布的 CSS 尺寸跟的是
+                    // 外层容器。图片一旦撑破容器（例如 max-height 失效），纵向就会差出
+                    // 近 10%，笔迹整体下移并放大 —— 这就是"点的位置不对、框特别大"。
+                    const imgRect = modalImg.getBoundingClientRect();
+                    canvas.width = Math.max(1, Math.round(imgRect.width));
+                    canvas.height = Math.max(1, Math.round(imgRect.height));
                     canvas.style.display = 'block';
 
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -2005,6 +2027,8 @@
                     editBtn.style.display = 'none';
                     editToolbar.classList.add('show');
                 } else {
+                    viewport.classList.remove('is-editing');
+                    baseSize = { w: 0, h: 0 };
                     canvas.style.display = 'none';
                     editBtn.style.display = 'block';
                     editToolbar.classList.remove('show');
@@ -2021,16 +2045,14 @@
                 mergeCanvas.height = naturalH;
                 const mergeCtx = mergeCanvas.getContext('2d');
 
-                // 1. 绘制高清原图
+                // 2. 绘制高清原图
                 mergeCtx.drawImage(modalImg, 0, 0);
 
-                // 2. 缩放画布上下文，将屏幕尺寸的 Canvas 映射到原始尺寸
-                const scaleX = naturalW / canvas.width;
-                const scaleY = naturalH / canvas.height;
-                mergeCtx.scale(scaleX, scaleY);
-
-                // 3. 将画板涂鸦绘制到高清原图上
-                mergeCtx.drawImage(canvas, 0, 0);
+                // 3. 把画板涂鸦精确铺满原图。
+                //    用 drawImage 的目标尺寸一次映射，而不是先 scale 再画：
+                //    画布宽高比只要和图片差一点点（取整、容器高度差异），scale 就会
+                //    按两个不同的比例缩放，笔迹在原图上是歪的。
+                mergeCtx.drawImage(canvas, 0, 0, naturalW, naturalH);
 
                 // 4. 导出合并图
                 const finalDataUrl = mergeCanvas.toDataURL('image/png');

@@ -1692,23 +1692,41 @@
             cursor: grabbing;
         }
 
+        /* 尺寸一律用 vw/vh 表达：图片的 max-height 若写成 100%，而父级高度是 auto，
+           百分比会解析成 none（直接失效），图片就按自然尺寸铺满甚至溢出视口。
+           容器也不再自作主张限高，交给图片自己算，两者尺寸才能严格一致 ——
+           标注画布是 absolute 铺满容器的，差 1px 都会让笔迹错位。 */
         .wechat-img-container {
             position: relative;
             display: inline-block;
-            max-width: 90%;
-            max-height: 90%;
+            max-width: 90vw;
+            max-height: 90vh;
             transition: transform 0.22s cubic-bezier(0.1, 0.8, 0.25, 1);
             transform-origin: center center;
         }
 
         .img-modal img {
             display: block;
-            max-width: 100%;
-            max-height: 100%;
+            width: auto;
+            height: auto;
+            max-width: 90vw;
+            max-height: 90vh;
             object-fit: contain;
             border-radius: 4px;
             box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
             pointer-events: none;
+        }
+
+        /* 编辑态底部要给工具栏让位，否则工具栏会压住图片下沿，
+           那一段既看不清也标不了 */
+        .wechat-img-viewport.is-editing {
+            padding: 16px 0 118px;
+            box-sizing: border-box;
+        }
+
+        .wechat-img-viewport.is-editing .wechat-img-container,
+        .wechat-img-viewport.is-editing img#modalImg {
+            max-height: calc(90vh - 134px);
         }
 
         #wechatPainterCanvas {
