@@ -8,7 +8,7 @@
  *
  * 改了前端 JS/CSS 必须把 CACHE_VERSION 加一，否则老用户一直用旧壳。
  */
-const CACHE_VERSION = 'v2.2.1';
+const CACHE_VERSION = 'v2.2.2';
 const SHELL_CACHE = `timer-shell-${CACHE_VERSION}`;
 const ASSET_CACHE = `timer-asset-${CACHE_VERSION}`;
 

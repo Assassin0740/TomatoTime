@@ -1216,9 +1216,13 @@
                 // 处理大图和表情懒加载，将 content 处理为 data-src 格式
                 const contentHtml = lazyloadifyHtml(mdEnhanceHtml(n.content));
 
-                const noteDateContent = n.done && n.doneTime 
-                    ? `${formatDate(n.ts)} <span class="done-time-badge" style="background: rgba(76, 175, 80, 0.15); color: #81c784; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; font-weight: 500; border: 1px solid rgba(76, 175, 80, 0.3);">✓ 已完成: ${formatDate(n.doneTime)}</span>`
-                    : formatDate(n.ts);
+                // 【CR-029】创建时间与完成时间拆成两个可独立隐藏的 span；
+                // 提醒徽标仍用 .done-time-badge 但不带 card-time-done，不会被时间开关误伤。
+                const noteDateContent =
+                    `<span class="card-time-create">${formatDate(n.ts)}</span>` +
+                    (n.done && n.doneTime
+                        ? ` <span class="done-time-badge card-time-done" style="background: rgba(76, 175, 80, 0.15); color: #81c784; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; font-weight: 500; border: 1px solid rgba(76, 175, 80, 0.3);">✓ 已完成: ${formatDate(n.doneTime)}</span>`
+                        : '');
 
                 // 提醒徽标（M14-3），点击可直接改时间
                 const remindBadge = n.remindAt
@@ -5527,6 +5531,91 @@
             modeText.style.display = showModeLabel.checked ? 'block' : 'none';
         }
 
+        // ==================== CR-029 任务信息显示 ====================
+        // 六项细粒度开关 + 一键纯任务模式。全部通过 body class 交给 CSS：
+        // 表格视图用的是就地复用（_lastState 命中就跳过重绘），靠 CSS 隐藏最稳，
+        // 切换设置零重绘、不闪，也不用给每行加判断。
+        const TASK_INFO_DEFAULTS = {
+            priority: true, type: true, project: true,
+            status: true, created: true, doneTime: true
+        };
+        const TASK_INFO_FIELDS = [
+            ['priority', 'colPriorityToggle', 'hide-priority'],
+            ['type', 'colTypeToggle', 'hide-type'],
+            ['project', 'colProjectToggle', 'hide-project'],
+            ['status', 'colStatusToggle', 'hide-status'],
+            ['created', 'colCreatedToggle', 'hide-created'],
+            ['doneTime', 'colDoneTimeToggle', 'hide-done-time']
+        ];
+
+        function readTaskInfoSettings() {
+            let raw = null;
+            try { raw = JSON.parse(localStorage.getItem('taskInfoSettings') || 'null'); } catch (e) { raw = null; }
+            return {
+                pure: !!(raw && raw.pure),
+                cols: Object.assign({}, TASK_INFO_DEFAULTS, (raw && raw.cols) || {})
+            };
+        }
+
+        function saveTaskInfoSettings(s) {
+            localStorage.setItem('taskInfoSettings', JSON.stringify(s));
+        }
+
+        /** 表格空行的 colspan 要跟着可见列数走，否则隐藏后会多出一截空白 */
+        function visibleColumnCount() {
+            const s = readTaskInfoSettings();
+            const keys = TASK_INFO_FIELDS.map(f => f[0]);
+            const hidden = s.pure ? keys.length : keys.filter(k => !s.cols[k]).length;
+            return 8 - hidden; // 任务内容 + 操作 恒定可见
+        }
+
+        function applyTaskInfoSettings(s) {
+            const b = document.body;
+            b.classList.toggle('pure-task-mode', s.pure);
+            TASK_INFO_FIELDS.forEach(([key, , cls]) => {
+                b.classList.toggle(cls, !s.pure && !s.cols[key]);
+            });
+            b.classList.toggle('hide-note-date',
+                (s.pure || !s.cols.created) && (s.pure || !s.cols.doneTime));
+
+            const pureToggle = document.getElementById('pureTaskModeToggle');
+            if (pureToggle) pureToggle.checked = s.pure;
+            TASK_INFO_FIELDS.forEach(([key, id]) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = !!s.cols[key];
+            });
+            const fine = document.getElementById('taskInfoFineTune');
+            if (fine) fine.classList.toggle('task-info-locked', s.pure);
+            const hint = document.getElementById('taskInfoHint');
+            if (hint) hint.textContent = s.pure
+                ? '纯任务模式已开启：只显示任务内容，操作保留评论 / 完成 / 删除。关掉后可逐项自定义。'
+                : '关掉哪项，表格列和卡片上对应的标签就一起消失；任务数据本身不会丢。';
+        }
+
+        function initTaskInfoSettings() {
+            applyTaskInfoSettings(readTaskInfoSettings());
+            const pureToggle = document.getElementById('pureTaskModeToggle');
+            if (pureToggle) {
+                pureToggle.onchange = () => {
+                    const cur = readTaskInfoSettings();
+                    cur.pure = pureToggle.checked;
+                    saveTaskInfoSettings(cur);
+                    applyTaskInfoSettings(cur);
+                };
+            }
+            TASK_INFO_FIELDS.forEach(([key, id]) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.onchange = () => {
+                    const cur = readTaskInfoSettings();
+                    cur.cols[key] = el.checked;
+                    saveTaskInfoSettings(cur);
+                    applyTaskInfoSettings(cur);
+                };
+            });
+        }
+        initTaskInfoSettings();
+
         window.toggleCollapsible = (id) => {
             const content = document.getElementById(id + 'Container');
             const arrow = document.getElementById(id + 'Arrow');
@@ -6042,7 +6131,7 @@
             });
             
             if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #666; padding: 20px;">暂无任务</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="${visibleColumnCount()}" style="text-align: center; color: #666; padding: 20px;">暂无任务</td></tr>`;
                 const sentinel = document.getElementById('tableSentinel');
                 if (sentinel) sentinel.style.display = 'none';
                 return;
@@ -6100,12 +6189,12 @@
                         ${commentsHtml}
                         ${commentInputHtml}
                     </td>
-                    <td style="vertical-align: middle;"><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
-                    <td style="vertical-align: middle;"><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
-                    <td style="vertical-align: middle;">${projectBadgeHtml(n)}</td>
-                    <td style="vertical-align: middle;"><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
-                    <td style="font-size:12px;color:#888;vertical-align: middle;">${formatDatePair(n.ts)}</td>
-                    <td style="font-size:12px;vertical-align: middle;">
+                    <td class="col-priority" style="vertical-align: middle;"><span style="background:${pColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="togglePriority(${n.id});renderTable();" title="点击切换优先级">${pText}</span></td>
+                    <td class="col-type" style="vertical-align: middle;"><span style="background:${typeColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleType(${n.id});renderTable();" title="点击切换类型">${typeText}</span></td>
+                    <td class="col-project" style="vertical-align: middle;">${projectBadgeHtml(n)}</td>
+                    <td class="col-status" style="vertical-align: middle;"><span style="background:${doneColor};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer" onclick="toggleDone(${n.id});renderTable();" title="点击切换完成状态">${doneText}</span></td>
+                    <td class="col-created" style="font-size:12px;color:#888;vertical-align: middle;">${formatDatePair(n.ts)}</td>
+                    <td class="col-done-time" style="font-size:12px;vertical-align: middle;">
                         ${n.done && n.doneTime ? `<span style="color: #81c784; background: rgba(76, 175, 80, 0.15); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(76, 175, 80, 0.3); font-weight: 500;">✓ ${formatDatePair(n.doneTime)}</span>` : '<span style="color: #666;">-</span>'}
                     </td>
                     <td style="vertical-align: middle; white-space: nowrap;">

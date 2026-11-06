@@ -93,6 +93,47 @@
             </div>
         </div>
 
+        <!-- 【CR-029】任务信息显示：逐项控制 + 一键纯任务模式。
+             用 body 上的 class 驱动 CSS，表格列和卡片标签同时生效，
+             切换时不需要重新渲染列表（表格用的是就地复用，重绘会闪）。 -->
+        <div class="settings-section">
+            <h4>任务信息显示</h4>
+            <div class="settings-row">
+                <label title="只保留任务内容、评论、完成、删除">纯任务模式</label>
+                <label class="toggle-switch" title="隐藏优先级 / 短期长期 / 项目 / 状态 / 时间，录入时也不必选">
+                    <input type="checkbox" id="pureTaskModeToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div id="taskInfoFineTune">
+                <div class="settings-row">
+                    <label>显示优先级（紧急与否）</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colPriorityToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>显示类型（短期 / 长期）</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colTypeToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>显示项目</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colProjectToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>显示状态</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colStatusToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>显示创建时间</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colCreatedToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="settings-row">
+                    <label>显示完成时间</label>
+                    <label class="toggle-switch"><input type="checkbox" id="colDoneTimeToggle" checked><span class="toggle-slider"></span></label>
+                </div>
+            </div>
+            <div class="settings-hint" id="taskInfoHint">关掉哪项，表格列和卡片上对应的标签就一起消失；任务数据本身不会丢。</div>
+        </div>
+
         <div class="settings-section">
             <h4>颜色设置</h4>
             <div class="settings-row">
@@ -551,12 +592,12 @@
                     <thead>
                         <tr>
                             <th>任务内容</th>
-                            <th>优先级</th>
-                            <th>类型</th>
-                            <th>项目</th>
-                            <th>状态</th>
-                            <th>创建时间</th>
-                            <th>完成时间</th>
+                            <th class="col-priority">优先级</th>
+                            <th class="col-type">类型</th>
+                            <th class="col-project">项目</th>
+                            <th class="col-status">状态</th>
+                            <th class="col-created">创建时间</th>
+                            <th class="col-done-time">完成时间</th>
                             <th>操作</th>
                         </tr>
                     </thead>

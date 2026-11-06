@@ -3008,3 +3008,43 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
+
+        /* ==================== CR-029 任务信息显示 ====================
+           开关只切 body 上的 class，不重新渲染列表：表格视图用的是就地复用
+           （_lastState 会跳过重绘），靠 CSS 隐藏最稳，也不会闪。
+           :is() 把「单项关闭」和「纯任务模式」两种来源合成一条规则。 */
+        body:is(.hide-priority, .pure-task-mode) :is(.col-priority, .priority-tag, .priority-row) {
+            display: none !important;
+        }
+        body:is(.hide-type, .pure-task-mode) :is(.col-type, .type-tag, .type-row) {
+            display: none !important;
+        }
+        body:is(.hide-project, .pure-task-mode) :is(.col-project, .project-tag, .project-row) {
+            display: none !important;
+        }
+        body:is(.hide-status, .pure-task-mode) :is(.col-status, .status-tag) {
+            display: none !important;
+        }
+        body:is(.hide-created, .pure-task-mode) :is(.col-created, .card-time-create) {
+            display: none !important;
+        }
+        body:is(.hide-done-time, .pure-task-mode) :is(.col-done-time, .card-time-done) {
+            display: none !important;
+        }
+        /* 两个时间都关了，日期行就只剩空白（提醒徽标也一并收起），整行不占位 */
+        body.hide-note-date .note-date {
+            display: none !important;
+        }
+        /* 纯任务模式：录入区只留输入框和「添加」；排序/筛选里跟紧急、类型有关的入口收起，
+           但「已完成 / 未完成」筛选保留 —— 那个跟状态标签不是一回事。 */
+        body.pure-task-mode :is(#sortPriority, #filterP3, #filterP2, #filterP1) {
+            display: none !important;
+        }
+        body.pure-task-mode .tool-group:has(.type-toggle-btn) {
+            display: none !important;
+        }
+        /* 纯任务模式下细项开关交总开关接管，避免用户改了却看不出效果 */
+        .task-info-locked {
+            opacity: 0.42;
+            pointer-events: none;
+        }
