@@ -2708,6 +2708,19 @@
         }
 
         /**
+         * 【2026-11-06】取剪贴板表格解析模块。
+         * 窗口开了 nodeIntegration:true，`<script>` 里的 UMD 会走 CommonJS 分支，
+         * window.ClipboardTable 可能不存在 —— 这里再用 require 兜一层，保证两条路都通。
+         */
+        function getClipboardTable() {
+            if (window.ClipboardTable) return window.ClipboardTable;
+            if (typeof require === 'function') {
+                try { return require('./clipboard-table.js'); } catch (e) { /* ignore */ }
+            }
+            return null;
+        }
+
+        /**
          * 【2026-11-05】从主进程直读系统剪贴板的 HTML（CF_HTML）。
          * 腾讯文档这类网页应用复制时，paste 事件的 clipboardData 偶尔拿不到 text/html，
          * 但系统剪贴板里其实是有富文本的；网页版没有 Electron，直接返回空字符串。
@@ -2729,8 +2742,9 @@
          * 优先用 insertHTML 保留浏览器撤销栈；失败时退回 Range 插入，保证内容一定落地。
          */
         function insertTableIntoEditable(editable, tableData) {
-            if (!editable || editable.isConnected === false || !window.ClipboardTable) return false;
-            const html = window.ClipboardTable.rowsToTableHtml(tableData) + '<br>';
+            const TableLib = getClipboardTable();
+            if (!editable || editable.isConnected === false || !TableLib) return false;
+            const html = TableLib.rowsToTableHtml(tableData) + '<br>';
             const sel = window.getSelection();
             editable.focus();
             let range = null;
@@ -2843,7 +2857,7 @@
             const htmlSrcs = extractImgSrcs(html);
             // 【2026-11-05】腾讯文档 / 在线表格的表格数据在 text/html 或 TSV 里，
             // 必须在同步阶段（preventDefault 之前）解析好，异步分支才能直接用。
-            const ClipboardTable = window.ClipboardTable;
+            const ClipboardTable = getClipboardTable();
             const tableData = ClipboardTable ? ClipboardTable.extract(html, plain) : null;
             e.preventDefault();
 

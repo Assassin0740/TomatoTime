@@ -21,8 +21,11 @@
  */
 (function (root, factory) {
     const api = factory();
+    // 【2026-11-06 修复】窗口开了 nodeIntegration，渲染进程里 `module` 是存在的：
+    // 旧写法走 CommonJS 分支，window.ClipboardTable 根本没挂上，表格粘贴一直空转。
+    // 现在两边都挂：浏览器 / Electron 渲染进程用 window，Node 单测用 module.exports。
+    if (typeof window !== 'undefined') window.ClipboardTable = api;
     if (typeof module === 'object' && module.exports) module.exports = api;
-    else root.ClipboardTable = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
