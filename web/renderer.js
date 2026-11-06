@@ -2526,6 +2526,177 @@
             persistEditable(editable);
         }
 
+        // ---- 图文混排剪贴板（2026-11-06）----
+        /**
+         * 把剪贴板 HTML 拆成「按原始顺序」的图文块。
+         * 旧逻辑是「所有文字一次性插入 + 所有图片追加到末尾」，图文混排（文字-图片-文字-图片）
+         * 粘进来就变成「文字全在顶部、图片全堆在底部」。这里按 DOM 文档顺序产出：
+         *   { type: 'text', text } / { type: 'image', src } / { type: 'break' }
+         * 用 DOMParser 解析（inert document，不执行脚本、不加载图片），再逐层遍历。
+         */
+        function parseRichClipboardItems(html) {
+            const items = [];
+            if (!html) return items;
+
+            let holder;
+            try {
+                holder = new DOMParser().parseFromString(html, 'text/html').body;
+            } catch (e) {
+                return items;
+            }
+            if (!holder) return items;
+            holder.querySelectorAll('script,style,noscript,template').forEach(n => n.remove());
+
+            let buf = '';
+            const clean = (s) => String(s || '')
+                .replace(/\u00a0/g, ' ')
+                .replace(/[ \t]+/g, ' ')
+                .split('\n').map(line => line.trim()).join('\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            const pushBreak = () => {
+                if (!items.length) return;
+                if (items[items.length - 1].type !== 'break') items.push({ type: 'break' });
+            };
+            const flush = (withBreak) => {
+                const text = clean(buf);
+                buf = '';
+                if (text) items.push({ type: 'text', text: text });
+                if (withBreak && (text || (items.length && items[items.length - 1].type === 'image'))) {
+                    pushBreak();
+                }
+            };
+
+            const BLOCK = /^(P|DIV|LI|UL|OL|H[1-6]|BLOCKQUOTE|SECTION|ARTICLE|PRE|TR|FIGURE|FIGCAPTION)$/;
+            const walk = (node) => {
+                Array.from(node.childNodes).forEach(child => {
+                    if (child.nodeType === 3) {
+                        buf += child.nodeValue;
+                        return;
+                    }
+                    if (child.nodeType !== 1) return;
+                    const tag = child.tagName;
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') return;
+                    if (tag === 'BR') {
+                        buf += '\n';
+                        return;
+                    }
+                    if (tag === 'IMG') {
+                        flush(false);
+                        const src = child.getAttribute('data-src') || child.getAttribute('src') || '';
+                        if (src && !isLazyPlaceholder(src)) items.push({ type: 'image', src: src });
+                        return;
+                    }
+                    if (tag === 'TABLE') {
+                        // 数据表已走表格分支；这里遇到的是图文里夹带的小表格，退化成文字别丢内容
+                        flush(false);
+                        const text = clean(child.textContent || '');
+                        if (text) {
+                            items.push({ type: 'text', text: text });
+                            pushBreak();
+                        }
+                        return;
+                    }
+                    const isBlock = BLOCK.test(tag);
+                    if (isBlock) flush(false);
+                    walk(child);
+                    if (isBlock) flush(true);
+                });
+            };
+            walk(holder);
+            flush(false);
+            while (items.length && items[items.length - 1].type === 'break') items.pop();
+            return items;
+        }
+
+        /**
+         * 按原始顺序插入「文字 + 图片」。
+         * 图片仍逐张本地化（网络图会入库，离线也能看）；HTML 里的地址取不到时，
+         * 用剪贴板同时提供的图片文件补位。返回图片张数；失败返回 false。
+         */
+        async function insertRichClipboardContent(editable, items, fallbackFiles) {
+            if (!editable || editable.isConnected === false) return false;
+            const sel = window.getSelection();
+            let range = null;
+            if (sel && sel.rangeCount > 0) {
+                const r = sel.getRangeAt(0);
+                if (editable.contains(r.commonAncestorContainer)) range = r;
+            }
+            if (!range) {
+                range = document.createRange();
+                range.selectNodeContents(editable);
+                range.collapse(false);
+            }
+            range.deleteContents();
+
+            const frag = document.createDocumentFragment();
+            const appendBreak = () => {
+                if (frag.lastChild && frag.lastChild.tagName === 'BR') return;
+                frag.appendChild(document.createElement('br'));
+            };
+            const srcCache = new Map();
+            const files = Array.isArray(fallbackFiles) ? fallbackFiles.slice() : [];
+            let fileCursor = 0;
+            let imageCount = 0;
+
+            for (const item of items) {
+                if (item.type === 'break') {
+                    appendBreak();
+                    continue;
+                }
+                if (item.type === 'text') {
+                    item.text.split('\n').forEach((line, i) => {
+                        if (i > 0) frag.appendChild(document.createElement('br'));
+                        if (line) frag.appendChild(document.createTextNode(line));
+                    });
+                    continue;
+                }
+                if (item.type !== 'image') continue;
+
+                let url = srcCache.has(item.src) ? srcCache.get(item.src) : null;
+                if (!srcCache.has(item.src)) {
+                    url = await localizeImageSrc(item.src);
+                    if (!url && files.length) {
+                        const file = files[fileCursor++];
+                        if (file) {
+                            const dataUrl = await fileToDataUrl(file);
+                            if (dataUrl) url = await localizeImageSrc(dataUrl);
+                        }
+                    }
+                    srcCache.set(item.src, url || null);
+                }
+                if (!url) continue;
+
+                const img = document.createElement('img');
+                img.src = url;
+                img.style.maxWidth = '100%';
+                img.style.maxHeight = '200px';
+                img.style.objectFit = 'contain';
+                img.style.borderRadius = '8px';
+                img.style.margin = '4px 0';
+                frag.appendChild(img);
+                imageCount++;
+                appendBreak();
+            }
+
+            while (frag.lastChild && frag.lastChild.tagName === 'BR') frag.removeChild(frag.lastChild);
+            if (!frag.childNodes.length) return false;
+            const last = frag.lastChild;
+            range.insertNode(frag);
+            if (last && last.parentNode && sel) {
+                const after = document.createRange();
+                after.setStartAfter(last);
+                after.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(after);
+            }
+            if (editable.id === 'noteInput') updateInputPlaceholder(editable);
+            if (editable.classList && editable.classList.contains('table-content')) return imageCount;
+            persistEditable(editable);
+            return imageCount;
+        }
+        // ---- /图文混排剪贴板 ----
+
         /** HTML 兜底转纯文本（部分软件只给 HTML，不给 text/plain） */
         function htmlToPlainText(html) {
             if (!html) return '';
@@ -2688,6 +2859,22 @@
 
                 // ① 剪贴板里直接带图片文件 / HTML 里带图（截图工具、资源管理器、网页、企业微信图文）
                 if (fileImgs.length || htmlSrcs.length) {
+                    // ①-A 【2026-11-06】图文混排：按 HTML 里的原始顺序逐段插入（文字 → 图片 → 文字 …）。
+                    //      旧逻辑把文字一次性插完、再追加所有图片，图文一混排顺序就全乱了。
+                    if (htmlSrcs.length) {
+                        const richItems = parseRichClipboardItems(html);
+                        if (richItems.some(it => it.type === 'image') && stillThere()) {
+                            const inserted = await insertRichClipboardContent(editable, richItems, fileImgs);
+                            if (inserted !== false) {
+                                showAppToast(inserted > 0
+                                    ? '已粘贴文字和 ' + inserted + ' 张图片'
+                                    : '已粘贴文字');
+                                return;
+                            }
+                        }
+                    }
+
+                    // ①-B 没有 HTML 结构（纯图片文件 / 剪贴板只给位图）：沿用「文字 + 图片」
                     const urls = [];
                     for (const file of fileImgs) {
                         const dataUrl = await fileToDataUrl(file);
