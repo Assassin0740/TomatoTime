@@ -3115,6 +3115,15 @@
                 else showAppToast('打开失败：' + ((res && res.error) || '未知错误'));
                 return;
             }
+            if (provider.kind === 'app') {
+                // 自家程序：用自定义协议唤起，找不到就提示它没装
+                const ipc = getIpc();
+                if (!ipc) { showAppToast('网页版不支持唤起本地程序'); return; }
+                const res = await ipc.invoke('workbench:open', { target: url, provider: provider.id });
+                if (res && res.ok) showAppToast('已在创作台打开');
+                else showAppToast((res && res.error) || '创作台没找到，先运行一次让它注册协议');
+                return;
+            }
             await openAttachment(url);
         }
 

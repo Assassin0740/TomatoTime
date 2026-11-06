@@ -61,20 +61,31 @@ test('docx：压缩包预览仍是默认，WordCraft 作为第二候选', () => 
     assert.equal(list[1].id, 'wordcraft');
 });
 
-test('pdf：PdfCraft 排第一，系统默认程序兜底在最后', () => {
+test('pdf：PdfCraft 排第一，系统默认程序作兜底', () => {
     const list = EP.providersFor('a.pdf');
     assert.equal(list[0].id, 'pdfcraft');
-    assert.equal(list[list.length - 1].id, 'system');
+    assert.equal(list[list.length - 2].id, 'system');
+    assert.equal(list[list.length - 1].id, 'workbench', '创作台排在最后，不影响点击默认行为');
 });
 
 test('psd：PhotoCraft 排第一', () => {
     assert.equal(EP.primaryProvider('图层.psd').id, 'photocraft');
 });
 
-test('未知扩展名：只剩兜底，不会返回空', () => {
+test('未知扩展名：系统默认程序是第一个，创作台作为附加入口', () => {
     const list = EP.providersFor('a.xyz123');
-    assert.equal(list.length, 1);
-    assert.equal(list[0].id, 'system');
+    assert.equal(list.length, 2);
+    assert.equal(list[0].id, 'system', '点击仍然走系统默认程序');
+    assert.equal(list[1].id, 'workbench');
+});
+
+test('workbench 永远排在 system 之后（点击默认行为零变化）', () => {
+    ['a.png', 'a.pdf', 'a.docx', 'a.zip', 'a.xyz'].forEach(name => {
+        const list = EP.providersFor(name);
+        const iSys = list.findIndex(p => p.id === 'system');
+        const iWb = list.findIndex(p => p.id === 'workbench');
+        assert.ok(iSys >= 0 && iWb > iSys, name + ' 的顺序不对');
+    });
 });
 
 test('providersFor 的结果按 rank 升序，且不含不匹配的项', () => {

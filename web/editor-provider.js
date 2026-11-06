@@ -41,6 +41,7 @@
      * kind:
      *   builtin  —— 在计时器自己里完成，直接调 JS 函数
      *   external —— 起一个独立进程（Craft 套件那 13 个）
+     *   app      —— 用自定义协议唤起自家另一个程序（创作台）
      *   headless —— 不出界面，只产出结果（缩略图 / 格式转换），留给以后的 Rust 模块
      */
     const PROVIDERS = [
@@ -87,6 +88,18 @@
             exts: ['*'],
             rank: 900,
             hint: '交给 Windows'
+        },
+        {
+            // 【2026-11-06 CR-022】自家创作台：用自定义协议唤起，不占安装包体积。
+            // rank 故意排在 system 之后 —— 点击文件的默认行为一个字都不改，
+            // 想用创作台就从右键菜单进。
+            id: 'workbench',
+            name: '在创作台打开',
+            kind: 'app',
+            exts: ['*'],
+            rank: 950,
+            protocol: 'workbench',
+            hint: '文件中枢 / 调度外部编辑器'
         }
     ];
 

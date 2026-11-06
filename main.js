@@ -2000,6 +2000,67 @@ ipcMain.handle('external:set-path', async (event, input) => {
 });
 
 // 用指定编辑器打开附件
+/* ==================== 与创作台互通 ==================== */
+
+/**
+ * 【2026-11-06 CR-022】把文件送到「创作台」。
+ *
+ * 两条路，优先第一条：
+ *   ① 直接 spawn 创作台的 exe，把 workbench:// 链接当参数传进去（不依赖协议注册）
+ *   ② 退回 shell.openExternal，让 Windows 自己按协议找程序
+ * 第①条存在的原因：协议注册是「创作台首次运行」才写进注册表的，
+ * 用户先装计时器后装创作台时，第②条会静默失效。
+ */
+function locateWorkbench() {
+    const exeNames = ['创作台.exe', 'Workbench.exe', 'workbench.exe'];
+    const bases = [
+        process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'),
+        process.env.ProgramFiles,
+        process.env['ProgramFiles(x86)'],
+        'C:\\Program Files',
+        'D:\\Program',
+        'E:\\Programs',
+        'D:\\Programs',
+        'E:\\Program Files'
+    ].filter(Boolean);
+    const folders = ['创作台\\dist\\win-unpacked', '创作台', 'Workbench\\dist\\win-unpacked', 'Workbench', 'workbench'];
+
+    for (const base of bases) {
+        for (const folder of folders) {
+            for (const name of exeNames) {
+                const p = path.join(base, folder, name);
+                try {
+                    if (fs.existsSync(p)) return p;
+                } catch (e) { /* 权限不足的目录跳过 */ }
+            }
+        }
+    }
+    return '';
+}
+
+ipcMain.handle('workbench:open', async (event, input) => {
+    try {
+        const target = (input && input.target) || '';
+        const p = toLocalPath(target);
+        if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
+        const url = 'workbench://open?path=' + encodeURIComponent(p);
+
+        const exe = locateWorkbench();
+        if (exe) {
+            const child = require('child_process').spawn(exe, [url], { detached: true, stdio: 'ignore' });
+            child.unref();
+            return { ok: true, via: 'spawn', exe: exe };
+        }
+
+        // 没找到安装目录：交给协议。协议没注册时 Windows 会弹「选择打开方式」
+        await shell.openExternal(url);
+        return { ok: true, via: 'protocol' };
+    } catch (e) {
+        console.error('唤起创作台失败:', e);
+        return { ok: false, error: (e && e.message) || String(e) };
+    }
+});
+
 ipcMain.handle('external:open', async (event, input) => {
     try {
         const id = input && input.id;
