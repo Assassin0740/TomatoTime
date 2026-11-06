@@ -485,7 +485,9 @@
 
         /** 1×1 透明 SVG 占位图：只用于「尚未进入视口的图片」，绝不能写回任务数据 */
         const LAZY_PLACEHOLDER = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==";
-        const isLazyPlaceholder = src => !!src && String(src).startsWith('data:image/svg+xml');
+        // 【2026-11-06】只认真正的懒加载占位图。以前把所有 data:image/svg+xml 都当占位，
+        // 结果粘贴进来的 SVG 矢量图会被当成"加载中的空图"直接丢掉。
+        const isLazyPlaceholder = src => !!src && String(src) === LAZY_PLACEHOLDER;
 
         // 懒加载 HTML 中的图片
         function lazyloadifyHtml(htmlContent) {
@@ -1304,7 +1306,8 @@
             // 当成 markdown 标题或列表渲染，否则表格会被 display:block 的 span 撑乱。
             const SKIP = {
                 CODE: 1, PRE: 1, IMG: 1, SCRIPT: 1, STYLE: 1, TEXTAREA: 1,
-                TABLE: 1, THEAD: 1, TBODY: 1, TFOOT: 1, TR: 1, TH: 1, TD: 1
+                TABLE: 1, THEAD: 1, TBODY: 1, TFOOT: 1, TR: 1, TH: 1, TD: 1,
+                VIDEO: 1, AUDIO: 1, SOURCE: 1, IFRAME: 1
             };
             const walk = (node) => {
                 Array.from(node.childNodes).forEach(child => {
@@ -2214,10 +2217,12 @@
             return await ipcRenderer.invoke('save-note-image', res.dataUrl);
         }
 
-        /** 任意图片地址 → 本库文件 URL（file:// 会先入库，避免原文件被清理后裂图） */
+        /** 任意图片/视频地址 → 本库文件 URL（file:// 会先入库，避免原文件被清理后裂图） */
         async function localizeImageSrc(src) {
             if (!src) return null;
-            if (/^data:image/.test(src)) {
+            // 【2026-11-06】内联媒体不只有图片：data:video/mp4、data:audio/... 同样要落盘，
+            // 否则 base64 视频会把笔记撑成几 MB 的字符串。
+            if (/^data:(image|video|audio)\//i.test(src)) {
                 if (typeof require === 'undefined') return src;
                 try {
                     const { ipcRenderer } = require('electron');
@@ -2289,16 +2294,82 @@
             });
         }
 
+        /**
+         * 【2026-11-06】内联 <svg>（从网页 / 设计工具复制的矢量图）→ dataURL。
+         * 用 img 承载，既能入库又能保持矢量清晰；img 上下文不执行 SVG 里的脚本。
+         */
+        function svgToDataUrl(svgEl) {
+            try {
+                const text = new XMLSerializer().serializeToString(svgEl);
+                if (!text || text.indexOf('<svg') === -1) return '';
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function isVideoSrc(src) {
+            const s = String(src || '');
+            return /^data:video\//i.test(s) || /\.(mp4|webm|mov|m4v|ogv|ogg|mkv|avi)(?:[?#]|$)/i.test(s);
+        }
+
+        function parseHtmlBody(html) {
+            if (!html) return null;
+            try {
+                return new DOMParser().parseFromString(html, 'text/html').body;
+            } catch (e) {
+                return null;
+            }
+        }
+
         function extractImgSrcs(html) {
             const out = [];
-            if (!html) return out;
-            const div = document.createElement('div');
-            div.innerHTML = html;
-            div.querySelectorAll('img').forEach(img => {
+            const body = parseHtmlBody(html);
+            if (!body) return out;
+            body.querySelectorAll('img').forEach(img => {
                 const src = img.getAttribute('data-src') || img.getAttribute('src');
                 if (src && !isLazyPlaceholder(src) && out.indexOf(src) === -1) out.push(src);
             });
+            body.querySelectorAll('svg').forEach(svg => {
+                const src = svgToDataUrl(svg);
+                if (src && out.indexOf(src) === -1) out.push(src);
+            });
             return out;
+        }
+
+        /** 剪贴板 HTML 里的 <video src> / <source src> */
+        function extractVideoSrcs(html) {
+            const out = [];
+            const body = parseHtmlBody(html);
+            if (!body) return out;
+            body.querySelectorAll('video').forEach(v => {
+                let src = v.getAttribute('src') || '';
+                if (!src) {
+                    const source = v.querySelector('source[src]');
+                    if (source) src = source.getAttribute('src');
+                }
+                if (src && out.indexOf(src) === -1) out.push(src);
+            });
+            return out;
+        }
+
+        /**
+         * 把剪贴板里的「文件」收进媒体库。
+         * Electron 的 File 对象带真实路径，直接让主进程 copy，避免几十 MB 视频在渲染进程里转 base64。
+         */
+        async function localizeMediaFile(file) {
+            if (!file) return null;
+            if (typeof require !== 'undefined' && file.path) {
+                try {
+                    const { ipcRenderer } = require('electron');
+                    const url = await ipcRenderer.invoke('save-note-image-source', { path: file.path });
+                    if (url) return url;
+                } catch (e) {
+                    // 复制失败再退回 dataURL 路径
+                }
+            }
+            const dataUrl = await fileToDataUrl(file);
+            return dataUrl ? await localizeImageSrc(dataUrl) : null;
         }
 
         /** 统一的「往某个可编辑区粘贴一张图」主流程 */
@@ -2575,7 +2646,10 @@
                         return;
                     }
                     if (child.nodeType !== 1) return;
-                    const tag = child.tagName;
+                    // 【2026-11-06】HTML 文档里内联 <svg> 的 tagName 是 'svg'（小写，非 HTML 命名空间），
+                    // 旧代码只比对 'SVG' 会漏掉它，导致内联图标被当成普通块元素、文本被并进段落。
+                    // 统一归一化成大写再比对，HTML 元素与 SVG 元素共用同一套分支。
+                    const tag = String(child.tagName || '').toUpperCase();
                     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') return;
                     if (tag === 'BR') {
                         buf += '\n';
@@ -2585,6 +2659,22 @@
                         flush(false);
                         const src = child.getAttribute('data-src') || child.getAttribute('src') || '';
                         if (src && !isLazyPlaceholder(src)) items.push({ type: 'image', src: src });
+                        return;
+                    }
+                    if (tag === 'SVG') {
+                        flush(false);
+                        const src = svgToDataUrl(child);
+                        if (src) items.push({ type: 'image', src: src });
+                        return;
+                    }
+                    if (tag === 'VIDEO') {
+                        flush(false);
+                        let src = child.getAttribute('src') || '';
+                        if (!src) {
+                            const source = child.querySelector('source[src]');
+                            if (source) src = source.getAttribute('src');
+                        }
+                        if (src) items.push({ type: 'video', src: src });
                         return;
                     }
                     if (tag === 'TABLE') {
@@ -2637,7 +2727,7 @@
             const srcCache = new Map();
             const files = Array.isArray(fallbackFiles) ? fallbackFiles.slice() : [];
             let fileCursor = 0;
-            let imageCount = 0;
+            let mediaCount = 0;   // 图片 + 视频
 
             for (const item of items) {
                 if (item.type === 'break') {
@@ -2651,11 +2741,11 @@
                     });
                     continue;
                 }
-                if (item.type !== 'image') continue;
+                if (item.type !== 'image' && item.type !== 'video') continue;
 
                 let url = srcCache.has(item.src) ? srcCache.get(item.src) : null;
                 if (!srcCache.has(item.src)) {
-                    url = await localizeImageSrc(item.src);
+                    url = item.alreadyLocal ? item.src : await localizeImageSrc(item.src);
                     if (!url && files.length) {
                         const file = files[fileCursor++];
                         if (file) {
@@ -2667,6 +2757,23 @@
                 }
                 if (!url) continue;
 
+                // 【2026-11-06】视频：落成原生 <video controls>，本地 file:// 播放，离线也能看
+                if (item.type === 'video') {
+                    const video = document.createElement('video');
+                    video.src = url;
+                    video.controls = true;
+                    video.preload = 'metadata';
+                    video.style.maxWidth = '100%';
+                    video.style.maxHeight = '320px';
+                    video.style.borderRadius = '8px';
+                    video.style.margin = '4px 0';
+                    video.style.background = '#000';
+                    frag.appendChild(video);
+                    mediaCount++;
+                    appendBreak();
+                    continue;
+                }
+
                 const img = document.createElement('img');
                 img.src = url;
                 img.style.maxWidth = '100%';
@@ -2675,7 +2782,7 @@
                 img.style.borderRadius = '8px';
                 img.style.margin = '4px 0';
                 frag.appendChild(img);
-                imageCount++;
+                mediaCount++;
                 appendBreak();
             }
 
@@ -2691,9 +2798,9 @@
                 sel.addRange(after);
             }
             if (editable.id === 'noteInput') updateInputPlaceholder(editable);
-            if (editable.classList && editable.classList.contains('table-content')) return imageCount;
+            if (editable.classList && editable.classList.contains('table-content')) return mediaCount;
             persistEditable(editable);
-            return imageCount;
+            return mediaCount;
         }
         // ---- /图文混排剪贴板 ----
 
@@ -2854,7 +2961,10 @@
             const html = cd.getData('text/html') || '';
             const items = Array.from(cd.items || []);
             const fileImgs = Array.from(cd.files || []).filter(f => f.type && f.type.startsWith('image/'));
+            // 【2026-11-06】视频文件：资源管理器复制 mp4 / 网页视频，和图片一样收进媒体库
+            const fileVideos = Array.from(cd.files || []).filter(f => f.type && /^video\//i.test(f.type));
             const htmlSrcs = extractImgSrcs(html);
+            const htmlVideoSrcs = extractVideoSrcs(html);
             // 【2026-11-05】腾讯文档 / 在线表格的表格数据在 text/html 或 TSV 里，
             // 必须在同步阶段（preventDefault 之前）解析好，异步分支才能直接用。
             const ClipboardTable = getClipboardTable();
@@ -2871,18 +2981,38 @@
                     return;
                 }
 
-                // ① 剪贴板里直接带图片文件 / HTML 里带图（截图工具、资源管理器、网页、企业微信图文）
-                if (fileImgs.length || htmlSrcs.length) {
-                    // ①-A 【2026-11-06】图文混排：按 HTML 里的原始顺序逐段插入（文字 → 图片 → 文字 …）。
-                    //      旧逻辑把文字一次性插完、再追加所有图片，图文一混排顺序就全乱了。
-                    if (htmlSrcs.length) {
+                // ① 剪贴板里直接带图片 / 视频文件，或 HTML 里带图 / 视频（截图工具、资源管理器、网页、企业微信图文）
+                if (fileImgs.length || htmlSrcs.length || fileVideos.length || htmlVideoSrcs.length) {
+                    // ①-A 【2026-11-06】图文 / 视频混排：按 HTML 里的原始顺序逐段插入（文字 → 图片 → 视频 → 文字 …）。
+                    //      旧逻辑把文字一次性插完、再追加所有媒体，混排顺序就全乱了。
+                    if (htmlSrcs.length || htmlVideoSrcs.length) {
                         const richItems = parseRichClipboardItems(html);
-                        if (richItems.some(it => it.type === 'image') && stillThere()) {
+                        if (richItems.some(it => it.type === 'image' || it.type === 'video') && stillThere()) {
                             const inserted = await insertRichClipboardContent(editable, richItems, fileImgs);
                             if (inserted !== false) {
                                 showAppToast(inserted > 0
-                                    ? '已粘贴文字和 ' + inserted + ' 张图片'
+                                    ? '已粘贴文字和 ' + inserted + ' 个媒体'
                                     : '已粘贴文字');
+                                return;
+                            }
+                        }
+                    }
+
+                    // ①-B 【2026-11-06】纯视频文件（资源管理器 / 网页下载的视频）：入库后逐个插入
+                    if (fileVideos.length) {
+                        const videoUrls = [];
+                        for (const file of fileVideos) {
+                            const url = await localizeMediaFile(file);
+                            if (url && videoUrls.indexOf(url) === -1) videoUrls.push(url);
+                        }
+                        if (videoUrls.length && stillThere()) {
+                            const items = [];
+                            const text = plain.trim() ? plain : htmlToPlainText(html);
+                            if (text) items.push({ type: 'text', text: text });
+                            videoUrls.forEach(url => items.push({ type: 'video', src: url, alreadyLocal: true }));
+                            const inserted = await insertRichClipboardContent(editable, items, []);
+                            if (inserted !== false) {
+                                showAppToast((text ? '已粘贴文字和 ' : '已粘贴 ') + videoUrls.length + ' 个视频');
                                 return;
                             }
                         }
@@ -3349,7 +3479,8 @@
         };
 
         function updateInputPlaceholder(el) {
-            if (!el.innerText.trim() && el.querySelectorAll('img').length === 0) {
+            const hasMedia = el.querySelectorAll('img, video').length > 0;
+            if (!el.innerText.trim() && !hasMedia) {
                 el.setAttribute('data-has-content', 'false');
             } else {
                 el.setAttribute('data-has-content', 'true');

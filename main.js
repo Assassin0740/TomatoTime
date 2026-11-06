@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const nodeUrl = require('url');
 const store = require('./store');
+const mediaFormat = require('./media-format');
 const { createApiServer } = require('./api-server');
 const { createWebhook, DEFAULT_WEBHOOK_CONFIG } = require('./webhook');
 
@@ -1527,6 +1528,17 @@ function getMimeType(filename) {
         case '.gif': return 'image/gif';
         case '.webp': return 'image/webp';
         case '.bmp': return 'image/bmp';
+        case '.svg': return 'image/svg+xml';
+        case '.ico': return 'image/x-icon';
+        // 2026-11-06：视频也能像图片一样收纳 / 显示
+        case '.mp4': return 'video/mp4';
+        case '.m4v': return 'video/x-m4v';
+        case '.webm': return 'video/webm';
+        case '.mov': return 'video/quicktime';
+        case '.ogv':
+        case '.ogg': return 'video/ogg';
+        case '.mp3': return 'audio/mpeg';
+        case '.wav': return 'audio/wav';
         default: return 'image/png';
     }
 }
@@ -1569,43 +1581,73 @@ function saveImageBuffer(buffer, ext) {
     return nodeUrl.pathToFileURL(filePath).href;
 }
 
-/** 把 base64 / dataURL 转成 file:// URL */
+/**
+ * 把 base64 / dataURL 转成 file:// URL。
+ * 【2026-11-06】图片 / SVG / 视频统一走 media-format：
+ *   data:image/svg+xml;base64,… 以前被 `data:image/(\w+);base64` 正则漏掉，存出来是坏 PNG；
+ *   视频（video/mp4 等）以前完全没有入口。
+ */
 function saveImageFromBase64(base64Data) {
-    let ext = 'png';
-    let data = String(base64Data);
-    const matches = data.match(/^data:image\/(\w+);base64,(.+)$/);
-    if (matches) {
-        ext = matches[1];
-        data = matches[2];
-    } else {
-        data = data.replace(/^data:image\/\w+;base64,/, '');
+    const parsed = mediaFormat.parseDataUrl(base64Data);
+    if (!parsed.buffer.length) throw new Error('媒体数据为空');
+    if (parsed.buffer.length > mediaFormat.MAX_MEDIA_BYTES) {
+        throw new Error('文件超过 ' + Math.round(mediaFormat.MAX_MEDIA_BYTES / 1024 / 1024) + 'MB，未保存');
     }
-    const buffer = Buffer.from(data, 'base64');
-    if (!buffer.length) throw new Error('图片数据为空');
-    return saveImageBuffer(buffer, ext);
+    return saveImageBuffer(parsed.buffer, parsed.ext);
 }
 
-/** 从网络下载图片（AI 注入的远程图片走这里） */
+/** 从网络下载媒体（图片 / SVG / 视频；AI 注入与网页粘贴都走这里） */
 async function downloadImage(url) {
     const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error('下载图片失败：HTTP ' + res.status);
-    const type = (res.headers.get('content-type') || '').toLowerCase();
-    let ext = 'png';
-    if (type.indexOf('jpeg') !== -1) ext = 'jpg';
-    else if (type.indexOf('gif') !== -1) ext = 'gif';
-    else if (type.indexOf('webp') !== -1) ext = 'webp';
-    else if (type.indexOf('bmp') !== -1) ext = 'bmp';
+    if (!res.ok) throw new Error('下载文件失败：HTTP ' + res.status);
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > mediaFormat.MAX_MEDIA_BYTES) {
+        throw new Error('文件超过 ' + Math.round(mediaFormat.MAX_MEDIA_BYTES / 1024 / 1024) + 'MB，未保存');
+    }
+    const type = res.headers.get('content-type') || '';
+    // Content-Type 优先；服务器给 application/octet-stream 时再看 URL 扩展名
+    const ext = mediaFormat.extFromContentType(type) || mediaFormat.extFromUrl(url) || 'png';
     const buffer = Buffer.from(await res.arrayBuffer());
-    if (!buffer.length) throw new Error('下载到的图片为空');
+    if (!buffer.length) throw new Error('下载到的文件为空');
+    if (buffer.length > mediaFormat.MAX_MEDIA_BYTES) {
+        throw new Error('文件超过 ' + Math.round(mediaFormat.MAX_MEDIA_BYTES / 1024 / 1024) + 'MB，未保存');
+    }
     return saveImageBuffer(buffer, ext);
 }
 
-/** 从本地文件读取并收纳进图片库（API 传入路径 / 粘贴自其它软件时用） */
+/**
+ * 从本地文件收纳进媒体库（API 传入路径 / 从资源管理器粘贴）。
+ * 【2026-11-06】视频几十上百 MB，不能整个 readFile 进内存：
+ * 先流式算 SHA-256，再用 copyFile 复制；同一个文件只存一份。
+ */
 function saveImageFromPath(filePath) {
     let p = String(filePath);
     if (p.indexOf('file://') === 0) p = nodeUrl.fileURLToPath(p);
-    const buffer = fs.readFileSync(p);
-    return saveImageBuffer(buffer, path.extname(p).replace('.', '').toLowerCase());
+    const stat = fs.statSync(p);
+    if (!stat.isFile()) throw new Error('不是一个文件：' + p);
+    if (stat.size > mediaFormat.MAX_MEDIA_BYTES) {
+        throw new Error('文件超过 ' + Math.round(mediaFormat.MAX_MEDIA_BYTES / 1024 / 1024) + 'MB，未保存');
+    }
+    if (!fs.existsSync(noteImagesPath)) fs.mkdirSync(noteImagesPath, { recursive: true });
+
+    const hash = crypto.createHash('sha256');
+    const fd = fs.openSync(p, 'r');
+    try {
+        const chunk = Buffer.alloc(1024 * 1024);
+        let read;
+        while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+            hash.update(chunk.subarray(0, read));
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+
+    let ext = path.extname(p).replace('.', '').toLowerCase();
+    if (!mediaFormat.isMediaExt(ext)) ext = 'png';
+    const fileName = 'img_' + hash.digest('hex') + '.' + ext;
+    const target = path.join(noteImagesPath, fileName);
+    if (!fs.existsSync(target)) fs.copyFileSync(p, target);
+    return nodeUrl.pathToFileURL(target).href;
 }
 
 /**
@@ -1825,6 +1867,11 @@ ipcMain.handle('image:to-data-url', async (event, src) => {
             : ext === 'webp' ? 'image/webp'
             : ext === 'bmp' ? 'image/bmp'
             : ext === 'svg' ? 'image/svg+xml'
+            : ext === 'mp4' ? 'video/mp4'
+            : ext === 'm4v' ? 'video/x-m4v'
+            : ext === 'webm' ? 'video/webm'
+            : ext === 'mov' ? 'video/quicktime'
+            : ext === 'ogv' || ext === 'ogg' ? 'video/ogg'
             : 'image/png';
         return { ok: true, dataUrl: 'data:' + mime + ';base64,' + buffer.toString('base64'), bytes: buffer.length };
     } catch (e) {

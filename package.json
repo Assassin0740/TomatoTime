@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js",
+    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js tests/media-format.test.js",
     "build": "electron-builder",
     "build:dir": "electron-builder --dir",
     "deploy:local": "node scripts/deploy-local.js"
@@ -24,6 +24,7 @@
       "preload.js",
       "renderer.js",
       "clipboard-table.js",
+      "media-format.js",
       "sync-client.js",
       "style.css",
       "计时器.html",
