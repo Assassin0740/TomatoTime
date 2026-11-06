@@ -17,6 +17,7 @@ const PORT = 9333 + Math.floor(Math.random() * 200);
 const page = process.argv[2] || 'tests/manual/timer-paste.html';
 const expr = process.argv[3] || 'window.__probe || "no probe"';
 const waitMs = Number(process.argv[4] || 5000);
+const shotPath = process.argv[5] || '';
 
 const url = 'file:///' + path.resolve(page).replace(/\\/g, '/');
 
@@ -79,6 +80,14 @@ const get = (p) => new Promise((resolve, reject) => {
 
     const val = res && res.result ? res.result.value : null;
     console.log(typeof val === 'string' ? val : JSON.stringify(val, null, 1));
+    if (res.exceptionDetails) console.log('EXC ' + JSON.stringify(res.exceptionDetails.exception || res.exceptionDetails));
+
+    // 可选：求值完顺手截屏，用来固定菜单 / 弹层的实际观感
+    if (shotPath) {
+        const shot = await send('Page.captureScreenshot', { format: 'png' });
+        require('fs').writeFileSync(path.resolve(shotPath), Buffer.from(shot.data, 'base64'));
+        console.log('shot ->', path.resolve(shotPath));
+    }
 
     ws.close();
     child.kill();
