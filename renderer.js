@@ -2862,6 +2862,15 @@
             return null;
         }
 
+        /** 【CR-020】「这个文件用什么打开」的唯一决策表；拿不到时上层退回系统默认程序 */
+        function getEditorProvider() {
+            if (window.EditorProvider) return window.EditorProvider;
+            if (typeof require === 'function') {
+                try { return require('./editor-provider.js'); } catch (e) { /* ignore */ }
+            }
+            return null;
+        }
+
         /**
          * 【2026-11-05】从主进程直读系统剪贴板的 HTML（CF_HTML）。
          * 腾讯文档这类网页应用复制时，paste 事件的 clipboardData 偶尔拿不到 text/html，
@@ -3000,8 +3009,12 @@
             chip.setAttribute('data-file', info.url || '');
             chip.setAttribute('data-name', info.name || '未命名文件');
             chip.setAttribute('data-size', String(info.size || 0));
-            if (info.archive) chip.setAttribute('data-archive', '1');
-            chip.setAttribute('title', info.archive ? '点击预览压缩包内容' : '点击用默认程序打开');
+            // 【CR-020】压缩包判定改为按扩展名现算：老笔记里没有 data-archive 也能正确识别
+            const EPe = getEditorProvider();
+            const isArc = !!info.archive ||
+                (EPe ? EPe.isArchiveName(info.name || info.url) : false);
+            if (isArc) chip.setAttribute('data-archive', '1');
+            chip.setAttribute('title', '点击打开，右键选择打开方式');
 
             const badge = document.createElement('span');
             badge.className = 'nf-badge';
@@ -3062,6 +3075,60 @@
             return true;
         }
 
+        /* ==================== 统一打开入口（CR-020）====================
+         * 以前：图片走 zoomImage、压缩包走 openArchivePreview、其它一律 file:open，
+         * 三条路互不相识，加一个编辑器要改四处 if-else。现在全部收敛到 editor-provider 那张表。
+         */
+
+        let externalInstalledCache = null;
+
+        /** 外部编辑器装没装（主进程探测，缓存 60 秒） */
+        async function getInstalledExternal(force) {
+            const ipc = getIpc();
+            if (!ipc) return {};
+            if (!force && externalInstalledCache) return externalInstalledCache;
+            try {
+                const res = await ipc.invoke('external:detect', { force: !!force });
+                externalInstalledCache = (res && res.installed) || {};
+            } catch (e) {
+                externalInstalledCache = {};
+            }
+            return externalInstalledCache;
+        }
+
+        /** 真正执行某一个 provider；上层只认 id，不关心它是内置还是外部进程 */
+        async function runProvider(provider, url, name) {
+            if (!provider) { await openAttachment(url); return; }
+            if (provider.id === 'annotator') {
+                if (typeof window.zoomImage === 'function') window.zoomImage(null, url);
+                return;
+            }
+            if (provider.id === 'archive') {
+                await openArchivePreview(url, name);
+                return;
+            }
+            if (provider.kind === 'external') {
+                const ipc = getIpc();
+                if (!ipc) { showAppToast('网页版不支持打开本地程序'); return; }
+                const res = await ipc.invoke('external:open', { id: provider.id, target: url });
+                if (res && res.ok) showAppToast('已用 ' + provider.name + ' 打开');
+                else showAppToast('打开失败：' + ((res && res.error) || '未知错误'));
+                return;
+            }
+            await openAttachment(url);
+        }
+
+        /** 点击附件：取「第一个可用的」provider 执行 */
+        async function openFileSmart(url, name) {
+            const EPe = getEditorProvider();
+            if (!EPe) { await openAttachment(url); return; }
+            const installed = await getInstalledExternal(false);
+            const menu = EPe.buildMenu(url || name, installed);
+            const pick = menu.find(m => !m.disabled) || menu[0];
+            if (!pick) { await openAttachment(url); return; }
+            await runProvider(pick.provider, url, name);
+        }
+
         async function openAttachment(url) {
             const ipc = getIpc();
             if (!ipc) { showAppToast('网页版不支持直接打开本地文件'); return; }
@@ -3077,7 +3144,7 @@
         }
 
         /** 附件标签上右键的小菜单：打开 / 在文件夹中显示 / 移除引用 */
-        function showFileChipMenu(chip, x, y) {
+        async function showFileChipMenu(chip, x, y) {
             const old = document.getElementById('fileChipMenu');
             if (old) old.remove();
             const menu = document.createElement('div');
@@ -3086,21 +3153,40 @@
             menu.style.left = x + 'px';
             menu.style.top = y + 'px';
 
-            const addItem = (label, fn) => {
+            const addItem = (label, fn, opts) => {
+                const o = opts || {};
                 const item = document.createElement('div');
-                item.className = 'file-chip-menu-item';
+                item.className = 'file-chip-menu-item' + (o.disabled ? ' disabled' : '');
                 item.textContent = label;
+                if (o.title) item.title = o.title;
                 item.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     menu.remove();
-                    fn();
+                    if (!o.disabled) fn();
                 });
                 menu.appendChild(item);
             };
             const url = chip.getAttribute('data-file');
-            const isArchive = chip.getAttribute('data-archive') === '1';
-            if (isArchive) addItem('查看压缩包内容', () => openArchivePreview(url, chip.getAttribute('data-name')));
-            addItem('用默认程序打开', () => openAttachment(url));
+            const name = chip.getAttribute('data-name');
+
+            // 【CR-020】菜单由 provider 表生成：装了哪些程序就出哪些项，没装的置灰
+            const EPe = getEditorProvider();
+            if (EPe) {
+                const installed = await getInstalledExternal(false);
+                EPe.buildMenu(url || name, installed).forEach(it => {
+                    if (it.disabled) {
+                        addItem(it.label, null, {
+                            disabled: true,
+                            title: '未检测到 ' + it.provider.name + '，可到 getartcraft.com 下载'
+                        });
+                    } else {
+                        addItem(it.label, () => runProvider(it.provider, url, name), { title: it.hint });
+                    }
+                });
+            } else {
+                addItem('用默认程序打开', () => openAttachment(url));
+            }
+
             addItem('在文件夹中显示', () => revealAttachment(url));
             addItem('移除引用（不删原文件）', () => {
                 const host = chip.parentNode;
@@ -3126,11 +3212,9 @@
             e.preventDefault();
             e.stopPropagation();
             const url = chip.getAttribute('data-file');
-            if (chip.getAttribute('data-archive') === '1') {
-                openArchivePreview(url, chip.getAttribute('data-name'));
-            } else {
-                openAttachment(url);
-            }
+            const name = chip.getAttribute('data-name');
+            // 【CR-020】不再判断 data-archive，统一交给 provider 表
+            openFileSmart(url, name);
         }, true);
 
         document.addEventListener('contextmenu', (e) => {

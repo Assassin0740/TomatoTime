@@ -2757,6 +2757,17 @@
             color: #fff;
         }
 
+        /* 未安装的外部编辑器：置灰但仍可见，让人知道"这里以后能开" */
+        .file-chip-menu-item.disabled {
+            color: #6b7780;
+            cursor: default;
+        }
+
+        .file-chip-menu-item.disabled:hover {
+            background: transparent;
+            color: #6b7780;
+        }
+
         /* 压缩包预览弹窗 */
         .archive-modal {
             position: fixed;

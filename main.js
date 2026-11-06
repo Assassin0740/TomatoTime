@@ -7,6 +7,7 @@ const nodeUrl = require('url');
 const store = require('./store');
 const mediaFormat = require('./media-format');
 const archive = require('./archive');
+const editorProvider = require('./editor-provider');
 const { createApiServer } = require('./api-server');
 const { createWebhook, DEFAULT_WEBHOOK_CONFIG } = require('./webhook');
 
@@ -1866,6 +1867,160 @@ ipcMain.handle('file:reveal', async (event, target) => {
     if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
     shell.showItemInFolder(p);
     return { ok: true };
+});
+
+/* ==================== 外部编辑器（CR-020）====================
+ * 「哪个文件用谁打开」全部由 editor-provider.js 那张表决定，主进程只负责两件事：
+ *   1. 探测某个 Craft 应用装没装（按 exe 名扫 PATH 和常见安装目录，结果缓存 60 秒）
+ *   2. 按 id 拉起一个独立进程，把文件路径传给它
+ * 这样加第 14 个编辑器 = 表里加一行，这里一行代码都不用改。
+ */
+
+const EXTERNAL_CONFIG_FILE = () => path.join(app.getPath('userData'), 'external-editors.json');
+let externalDetectCache = null;
+let externalDetectAt = 0;
+const EXTERNAL_CACHE_MS = 60 * 1000;
+
+/** 用户手动指定的路径（装在 D 盘、绿色版之类），优先于自动探测 */
+function loadExternalCustom() {
+    try {
+        const p = EXTERNAL_CONFIG_FILE();
+        if (!fs.existsSync(p)) return {};
+        const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return (raw && typeof raw === 'object') ? raw : {};
+    } catch (e) {
+        console.error('读取外部编辑器配置失败:', e);
+        return {};
+    }
+}
+
+function saveExternalCustom(map) {
+    try {
+        fs.writeFileSync(EXTERNAL_CONFIG_FILE(), JSON.stringify(map, null, 2), 'utf8');
+        return true;
+    } catch (e) {
+        console.error('保存外部编辑器配置失败:', e);
+        return false;
+    }
+}
+
+/** 该程序可能出现在哪些位置：先 PATH，再几种常见的安装布局 */
+function externalCandidates(provider) {
+    const out = [];
+    const exeNames = [provider.exe + '.exe', provider.name + '.exe'];
+    const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    exeNames.forEach(n => dirs.forEach(d => {
+        try { out.push(path.join(d, n)); } catch (e) { /* 路径非法，跳过 */ }
+    }));
+
+    const bases = [];
+    const push = b => { if (b && bases.indexOf(b) < 0) bases.push(b); };
+    push(process.env.ProgramFiles);
+    push(process.env['ProgramFiles(x86)']);
+    push(process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'));
+    push(process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ArtCraft'));
+    push(process.env.LOCALAPPDATA);
+    push('C:\\Program Files');
+    push('C:\\Program Files (x86)');
+
+    const folders = [provider.name, provider.exe, 'ArtCraft\\' + provider.name, 'ArtCraft'];
+    bases.forEach(b => {
+        folders.forEach(f => {
+            exeNames.forEach(n => {
+                try { out.push(path.join(b, f, n)); } catch (e) { /* ignore */ }
+            });
+        });
+    });
+    return out;
+}
+
+function locateExternal(provider) {
+    const custom = loadExternalCustom();
+    if (custom[provider.id] && fs.existsSync(custom[provider.id])) return custom[provider.id];
+    for (const p of externalCandidates(provider)) {
+        try {
+            if (p && fs.existsSync(p)) return p;
+        } catch (e) { /* 权限不足的目录直接跳过 */ }
+    }
+    return '';
+}
+
+/** 探测所有外部编辑器；force=true 时绕过缓存（用户刚装完程序） */
+function detectExternal(force) {
+    const now = Date.now();
+    if (!force && externalDetectCache && (now - externalDetectAt) < EXTERNAL_CACHE_MS) {
+        return externalDetectCache;
+    }
+    const map = {};
+    editorProvider.externalProviders().forEach(p => {
+        const found = locateExternal(p);
+        if (found) map[p.id] = found;
+    });
+    externalDetectCache = map;
+    externalDetectAt = now;
+    return map;
+}
+
+ipcMain.handle('external:detect', async (event, opts) => {
+    const force = !!(opts && opts.force);
+    if (force) externalDetectCache = null;
+    const installed = detectExternal(force);
+    return {
+        ok: true,
+        installed: installed,
+        custom: loadExternalCustom(),
+        list: editorProvider.externalProviders().map(p => ({
+            id: p.id,
+            name: p.name,
+            exts: p.exts,
+            hint: p.hint || '',
+            installed: !!installed[p.id],
+            path: installed[p.id] || ''
+        }))
+    };
+});
+
+// 手动指定某个编辑器的 exe 路径（传空字符串则清除）
+ipcMain.handle('external:set-path', async (event, input) => {
+    const id = input && input.id;
+    const target = String((input && input.path) || '').trim();
+    const provider = editorProvider.getById(id);
+    if (!provider || provider.kind !== 'external') {
+        return { ok: false, error: '未知的编辑器：' + id };
+    }
+    if (target && !fs.existsSync(target)) {
+        return { ok: false, error: '路径不存在：' + target };
+    }
+    const custom = loadExternalCustom();
+    if (target) custom[id] = target;
+    else delete custom[id];
+    if (!saveExternalCustom(custom)) return { ok: false, error: '配置写入失败' };
+    externalDetectCache = null;
+    return { ok: true, installed: detectExternal(true) };
+});
+
+// 用指定编辑器打开附件
+ipcMain.handle('external:open', async (event, input) => {
+    try {
+        const id = input && input.id;
+        const provider = editorProvider.getById(id);
+        if (!provider || provider.kind !== 'external') {
+            return { ok: false, error: '未知的编辑器：' + id };
+        }
+        const exe = detectExternal(false)[id];
+        if (!exe) return { ok: false, error: provider.name + ' 未安装' };
+
+        const p = toLocalPath(input && input.target);
+        if (!p || !fs.existsSync(p)) return { ok: false, error: '文件不存在' };
+
+        const { spawn } = require('child_process');
+        const child = spawn(exe, [p], { detached: true, stdio: 'ignore' });
+        child.unref();
+        return { ok: true, exe: exe, name: provider.name };
+    } catch (e) {
+        console.error('启动外部编辑器失败:', e);
+        return { ok: false, error: (e && e.message) || String(e) };
+    }
 });
 
 // 列出压缩包内部条目
