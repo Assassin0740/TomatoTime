@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../style.css">
+<style>
+  body { background: #111; margin: 0; padding: 20px; }
+  #wrap { width: 640px; }          /* 模拟便签卡片在列表里的实际宽度 */
+  #out { color: #0f0; font: 12px monospace; white-space: pre; padding: 10px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="note-card" id="card">
+    <div class="note-date">probe</div>
+    <div class="note-content-editable" contenteditable="true" id="ed"></div>
+  </div>
+</div>
+<pre id="out"></pre>
+<script>
+(async () => {
+const out = {};
+const ed = document.getElementById('ed');
+
+const cv = document.createElement('canvas');
+cv.width = 2000; cv.height = 1500;
+const ctx = cv.getContext('2d');
+ctx.fillStyle = '#4f8cff'; ctx.fillRect(0, 0, 2000, 1500);
+const dataUrl = cv.toDataURL('image/png');
+
+const rect = el => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
+const edRect = () => ed.getBoundingClientRect();
+
+out.editor = rect(ed);
+out.editorPadLeft = getComputedStyle(ed).paddingLeft;
+out.editorDisplay = getComputedStyle(ed).display;
+
+// A 干净 img
+let img = document.createElement('img');
+img.src = dataUrl;
+ed.appendChild(img);
+await new Promise(r => img.complete ? r() : img.addEventListener('load', r));
+out.A_clean = rect(img);
+const er = edRect(), ir = img.getBoundingClientRect();
+out.A_leftGap = Math.round(ir.left - er.left);
+
+// B 带 width 属性
+img.remove();
+img = document.createElement('img');
+img.src = dataUrl; img.setAttribute('width', '2000'); img.setAttribute('height', '1500');
+ed.appendChild(img);
+await new Promise(r => setTimeout(r, 100));
+out.B_attr = rect(img);
+
+// C 内联 style
+img.remove();
+img = document.createElement('img');
+img.src = dataUrl; img.setAttribute('style', 'width:1600px;height:1200px');
+ed.appendChild(img);
+await new Promise(r => setTimeout(r, 100));
+out.C_style = rect(img);
+
+// D 插入路径产物
+img.remove();
+img = document.createElement('img');
+img.src = dataUrl;
+img.style.maxWidth = '100%'; img.style.maxHeight = '200px';
+img.style.objectFit = 'contain'; img.style.margin = '4px 0';
+ed.appendChild(img);
+await new Promise(r => setTimeout(r, 100));
+out.D_inserted = rect(img);
+
+// E 图文混排
+ed.innerHTML = '第一行文字<br>';
+const rg = document.createRange(); rg.selectNodeContents(ed); rg.collapse(false);
+rg.insertNode(img);
+await new Promise(r => setTimeout(r, 120));
+out.E_mixed = rect(img);
+const ir2 = img.getBoundingClientRect(), er2 = edRect();
+out.E_leftGap = Math.round(ir2.left - er2.left);
+out.E_html = ed.innerHTML.slice(0, 120);
+
+// F 表格内图片
+ed.innerHTML = '<table class="pasted-table"><tbody><tr><td class="pasted-cell-img"><img src="' + dataUrl + '"></td></tr></tbody></table>';
+await new Promise(r => setTimeout(r, 120));
+const timg = ed.querySelector('td img');
+out.F_tableImg = timg ? rect(timg) : null;
+out.F_tableBox = (() => { const t = ed.querySelector('table'); return t ? rect(t) : null; })();
+
+document.getElementById('out').textContent = JSON.stringify(out, null, 1);
+document.title = 'DONE';
+})().catch(e => { document.getElementById('out').textContent = 'ERR ' + e.message; });
+</script>
+</body>
+</html>

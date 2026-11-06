@@ -521,6 +521,38 @@
         // 结果粘贴进来的 SVG 矢量图会被当成"加载中的空图"直接丢掉。
         const isLazyPlaceholder = src => !!src && String(src) === LAZY_PLACEHOLDER;
 
+        /**
+         * 【2026-11-06】图片尺寸归一化 —— 修「粘贴后图片异常放大 / 变形」
+         *
+         * 网页、Word、腾讯文档复制出来的 <img> 普遍自带尺寸：
+         *   <img width="2000" height="1500">
+         *   <img style="width:1600px;height:1200px">
+         * 而我们的样式里同时有 max-width:100% 和 max-height:200px。
+         * 当元素已有确定宽高时，这两个 max 是**各自独立**夹一次的，不会保持比例：
+         * 2000×1500 的图在 630px 宽的卡片里被夹成 614×200（实测），横向拉扁，
+         * 看起来就是"图片被异常放大"。
+         *
+         * 办法：把 width/height（属性和内联样式）都去掉，让浏览器只按比例缩。
+         * 表情包（.emoji）和附件预览（.preview-img）有固定尺寸，必须跳过。
+         */
+        function normalizeImgBox(img) {
+            if (!img || typeof img.removeAttribute !== 'function') return img;
+            const cls = img.classList;
+            if (cls && (cls.contains('emoji') || cls.contains('preview-img'))) return img;
+            img.removeAttribute('width');
+            img.removeAttribute('height');
+            const style = img.getAttribute('style');
+            if (style && /(^|;)\s*(width|height|aspect-ratio)\s*:/i.test(style)) {
+                const kept = style.split(';').filter(decl => {
+                    const name = decl.split(':')[0].trim().toLowerCase();
+                    return !!name && name !== 'width' && name !== 'height' && name !== 'aspect-ratio';
+                }).map(s => s.trim()).filter(Boolean).join('; ');
+                if (kept) img.setAttribute('style', kept);
+                else img.removeAttribute('style');
+            }
+            return img;
+        }
+
         // 懒加载 HTML 中的图片
         function lazyloadifyHtml(htmlContent) {
             if (!htmlContent) return '';
@@ -529,6 +561,9 @@
             const imgs = tempDiv.getElementsByTagName('img');
             for (let i = 0; i < imgs.length; i++) {
                 const img = imgs[i];
+                // 老数据里可能存着 width="2000" / style="width:1600px"，渲染时统一清掉，
+                // 否则每次重开都还是那张被拉扁的图。新粘贴的在插入时就清过了。
+                normalizeImgBox(img);
                 // 【2026-10-20 修复图片重开就丢】取真实地址时优先 data-src：
                 // 上一次渲染写入的占位图可能残留成 src，只读 img.src 会把占位图当成真实图片，
                 // 随后 removeAttribute('data-src') 就把真正的图片路径删掉了。
@@ -2283,11 +2318,10 @@
         function insertImageIntoEditable(editable, fileUrl) {
             const img = document.createElement('img');
             img.src = fileUrl;
-            img.style.maxWidth = '100%';
-            img.style.maxHeight = '200px';
-            img.style.objectFit = 'contain';
-            img.style.borderRadius = '8px';
-            img.style.margin = '4px 0';
+            // 【2026-11-06】尺寸一律交给样式表，不再写死内联 max-width/max-height。
+            // 内联样式优先级最高，会让表格视图那种「更矮的上限」失效；
+            // 而且一旦内联了 max-height，之后想按容器调大小就改不动了。
+            normalizeImgBox(img);
 
             const selection = window.getSelection();
             if (selection && selection.rangeCount > 0) {
@@ -2604,16 +2638,12 @@
             }
             const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
             if (urls.length) {
-                if (textVal) frag.appendChild(document.createElement('br'));
-                urls.forEach((url, i) => {
-                    if (i > 0) frag.appendChild(document.createElement('br'));
+                urls.forEach((url) => {
                     const img = document.createElement('img');
                     img.src = url;
-                    img.style.maxWidth = '100%';
-                    img.style.maxHeight = '200px';
-                    img.style.objectFit = 'contain';
-                    img.style.borderRadius = '8px';
-                    img.style.margin = '4px 0';
+                    // 尺寸交给样式表（块级 + 按容器限高），这里不再写内联尺寸：
+                    // 内联会压过表格视图更矮的上限，也没法按容器区分
+                    normalizeImgBox(img);
                     frag.appendChild(img);
                 });
             }
@@ -2756,8 +2786,17 @@
 
             const frag = document.createDocumentFragment();
             const appendBreak = () => {
-                if (frag.lastChild && frag.lastChild.tagName === 'BR') return;
+                const last = frag.lastChild;
+                if (!last) return;
+                if (last.tagName === 'BR') return;
+                // 图片 / 视频是块级元素，自己占一行；后面再贴 <br> 会多一个空行
+                if (last.tagName === 'IMG' || last.tagName === 'VIDEO') return;
                 frag.appendChild(document.createElement('br'));
+            };
+            // 媒体（图片 / 视频）现在是块级元素，自己就会换行。它前面若还留着
+            // 一个 <br>，浏览器会多渲染一个空行 —— 图文混排时看着就是"整体往下跑了"。
+            const dropTrailingBreak = () => {
+                while (frag.lastChild && frag.lastChild.tagName === 'BR') frag.removeChild(frag.lastChild);
             };
             const srcCache = new Map();
             const files = Array.isArray(fallbackFiles) ? fallbackFiles.slice() : [];
@@ -2803,22 +2842,22 @@
                     video.style.borderRadius = '8px';
                     video.style.margin = '4px 0';
                     video.style.background = '#000';
+                    dropTrailingBreak();
                     frag.appendChild(video);
                     mediaCount++;
-                    appendBreak();
+                    // 不再 appendBreak：视频在样式里是块级，自己就换行，
+                    // 再补一个 <br> 会多出空行（用户看到的"偏移"有一部分就是它）
                     continue;
                 }
 
                 const img = document.createElement('img');
                 img.src = url;
-                img.style.maxWidth = '100%';
-                img.style.maxHeight = '200px';
-                img.style.objectFit = 'contain';
-                img.style.borderRadius = '8px';
-                img.style.margin = '4px 0';
+                // 样式全部交给 CSS（.note-input / .note-content-editable / .table-content
+                // 各有各的上限），这里只保证不残留粘贴来源的 width/height
+                normalizeImgBox(img);
+                dropTrailingBreak();
                 frag.appendChild(img);
                 mediaCount++;
-                appendBreak();
             }
 
             while (frag.lastChild && frag.lastChild.tagName === 'BR') frag.removeChild(frag.lastChild);
@@ -2898,13 +2937,9 @@
             let done = 0;
             for (const img of imgs) {
                 img.setAttribute('data-localized', '1');
-                img.style.display = 'block';
-                img.style.maxWidth = '100%';
-                img.style.maxHeight = '110px';
-                img.style.width = 'auto';
-                img.style.objectFit = 'contain';
-                img.style.borderRadius = '6px';
-                img.style.margin = '2px auto';
+                // 尺寸全部交给 CSS（.pasted-cell-img 在卡片里 110px、表格视图里 80px）。
+                // 以前在这里写内联 max-height:110px，等于把表格视图的上限永久顶掉了。
+                normalizeImgBox(img);
                 const src = img.getAttribute('src') || '';
                 if (!src || isLazyPlaceholder(src)) continue;
                 const url = await localizeImageSrc(src);

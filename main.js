@@ -796,6 +796,30 @@ function createFloatWindow(options) {
     updateTrayMenu();
 }
 
+/**
+ * 调试探针（TIMER_PROBE=<js 文件>）
+ * 用来在真实主进程环境里跑一段脚本，量 DOM、抓报错。
+ * 平时不启用；只在排查渲染层问题时才设这个环境变量。
+ */
+async function runProbe(jsFile) {
+    try {
+        await new Promise(r => setTimeout(r, 2500));
+        const js = fs.readFileSync(jsFile, 'utf8');
+        const out = await mainWindow.webContents.executeJavaScript(js);
+        console.log('PROBE_RESULT ' + JSON.stringify(out));
+        const shot = process.env.TIMER_PROBE_SHOT;
+        if (shot) {
+            const img = await mainWindow.webContents.capturePage();
+            fs.writeFileSync(shot, img.toPNG());
+            console.log('PROBE_SHOT ' + shot);
+        }
+        const wait = Number(process.env.TIMER_PROBE_WAIT || 0);
+        if (wait) await new Promise(r => setTimeout(r, wait));
+    } catch (e) {
+        console.error('PROBE_ERROR ' + (e && e.stack ? e.stack : e));
+    }
+}
+
 function createWindow() {
     // 尝试设置主窗口图标
     const iconPath = path.join(__dirname, '图标', 'dstuy-bkp5e-001.ico');
@@ -826,6 +850,10 @@ function createWindow() {
     });
 
     mainWindow.loadFile('计时器.html');
+
+    if (process.env.TIMER_PROBE) {
+        mainWindow.webContents.on('did-finish-load', () => runProbe(process.env.TIMER_PROBE));
+    }
     
     // 主窗口关闭时询问用户
     mainWindow.on('close', (event) => {

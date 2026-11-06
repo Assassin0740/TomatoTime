@@ -763,6 +763,31 @@
             margin: 4px 0;
         }
 
+        /* 【2026-11-06 修「粘贴后图片异常放大 / 变形」】
+           来自网页 / Word / 腾讯文档的 <img> 常自带 width="2000" 或
+           style="width:1600px;height:1200px"。浏览器会把 max-width 和 max-height
+           各自夹一次：2000×1500 的图在 630px 宽的卡片里被夹成 614×200 —— 横向拉扁，
+           看着就是「异常放大」。把 width/height 强制回 auto，只让浏览器按比例缩。
+           表情包 / 附件预览（.preview-img / .emoji）有自己的固定尺寸，排除掉。 */
+        .note-input img:not(.preview-img):not(.emoji),
+        .comment-input img:not(.preview-img):not(.emoji) {
+            width: auto !important;
+            height: auto !important;
+            /* inline 的图片会紧贴在文字尾巴上（实测左偏 88px，就是前面那行字的宽度），
+               块级才能让它老老实实另起一行。表情包 / 附件预览不在此列，它们要跟文字同行。 */
+            display: block;
+            margin: 6px 0;
+        }
+
+        /* 评论区比新建输入框还窄，上限单独收一点（以前靠插入时写死的内联样式，
+           现在内联去掉了，这里必须有兜底，否则评论里的图会撑满整块） */
+        .comment-input img:not(.preview-img):not(.emoji) {
+            max-width: 100%;
+            max-height: 160px;
+            object-fit: contain;
+            border-radius: 6px;
+        }
+
         .priority-row,
         .type-row {
             display: flex;
@@ -1023,6 +1048,15 @@
             object-fit: contain;
             border-radius: 8px;
             margin: 4px 0;
+        }
+
+        /* 同上：粘贴来的图常自带 width/height，必须让它们回到 auto，
+           否则 max-width 与 max-height 各夹一次会把图横向拉扁 */
+        .note-content-editable img:not(.preview-img):not(.emoji) {
+            width: auto !important;
+            height: auto !important;
+            display: block;
+            margin: 6px 0;
         }
 
         .context-menu {
@@ -2654,6 +2688,19 @@
             object-fit: contain;
         }
         .table-content .pasted-table .pasted-cell-img { max-height: 80px; }
+
+        /* 表格视图里正文的图片：单元格本来就窄，给个更矮的上限，并且
+           同样把 width/height 拉回 auto（粘贴来源常带固定尺寸） */
+        .table-content img:not(.preview-img):not(.emoji):not(.pasted-cell-img) {
+            display: block;
+            width: auto !important;
+            height: auto !important;
+            max-width: 100%;
+            max-height: 160px;
+            margin: 4px 0;      /* 和正文一样左对齐：居中会让整块内容看着"偏" */
+            border-radius: 6px;
+            object-fit: contain;
+        }
 
         /* ==================== 视频（2026-11-06） ====================
            资源管理器 / 网页粘贴的 mp4 会入库成 <video controls>：
