@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; background: #14161a; color: #e6e8ec; font-family: "Microsoft YaHei", sans-serif; }
+  .row { display: flex; gap: 24px; padding: 22px; }
+  .col { flex: 1; min-width: 0; }
+  .tag { font-size: 12px; margin-bottom: 8px; color: #9aa3b2; }
+  .tag b { color: #fff; }
+  .card { background: #1b1e25; border: 1px solid #2b2f38; border-radius: 10px; padding: 10px 8px; font-size: 15px; line-height: 1.6; }
+  /* 旧行为：只有 max 约束，图片自带确定宽高 → 两个 max 各自夹一次，比例被破坏 */
+  .old img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px; }
+  /* 新行为 */
+  .new img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px;
+             width: auto !important; height: auto !important; display: block; margin: 6px 0; }
+  .meta { font-size: 11px; color: #7c8595; margin-top: 8px; font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="col old">
+    <div class="tag">修复前 · 粘贴自网页的图（自带 width/height）</div>
+    <div class="card" id="a">第一段文字<img id="i1" width="1600" height="1200"></div>
+    <div class="meta" id="m1"></div>
+  </div>
+  <div class="col new">
+    <div class="tag">修复后 · 同一张图</div>
+    <div class="card" id="b">第一段文字<img id="i2"></div>
+    <div class="meta" id="m2"></div>
+  </div>
+</div>
+<script>
+const cv = document.createElement('canvas');
+cv.width = 2000; cv.height = 1500;
+const c = cv.getContext('2d');
+const g = c.createLinearGradient(0, 0, 2000, 1500);
+g.addColorStop(0, '#3b82f6'); g.addColorStop(1, '#22d3ee');
+c.fillStyle = g; c.fillRect(0, 0, 2000, 1500);
+c.fillStyle = 'rgba(255,255,255,.92)';
+c.font = 'bold 220px sans-serif';
+c.fillText('2000 × 1500', 260, 780);
+const url = cv.toDataURL('image/png');
+for (const id of ['i1', 'i2']) document.getElementById(id).src = url;
+setTimeout(() => {
+  const a = document.getElementById('i1').getBoundingClientRect();
+  const b = document.getElementById('i2').getBoundingClientRect();
+  document.getElementById('m1').textContent =
+    `显示 ${Math.round(a.width)}×${Math.round(a.height)}  ·  原始比例 1.33 → 实际 ${(a.width / a.height).toFixed(2)}（被拉扁）`;
+  document.getElementById('m2').textContent =
+    `显示 ${Math.round(b.width)}×${Math.round(b.height)}  ·  原始比例 1.33 → 实际 ${(b.width / b.height).toFixed(2)}（保持比例、左对齐）`;
+}, 300);
+</script>
+</body>
+</html>

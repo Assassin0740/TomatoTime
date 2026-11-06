@@ -10,3 +10,6 @@ dist/
 _*
 cli_userdata/
 _testdata/
+
+# 探针截图（本地验证用，不进版本库）
+tests/manual/*.png
