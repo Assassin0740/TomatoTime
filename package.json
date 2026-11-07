@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js tests/media-format.test.js tests/archive.test.js tests/editor-provider.test.js tests/task-info.test.js",
+    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js tests/media-format.test.js tests/archive.test.js tests/editor-provider.test.js tests/task-info.test.js tests/settings-tabs.test.js",
     "build": "electron-builder",
     "build:dir": "electron-builder --dir",
     "deploy:local": "node scripts/deploy-local.js"

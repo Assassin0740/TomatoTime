@@ -20,15 +20,19 @@
 
     <div class="settings-panel" id="settingsPanel">
 
-        <!-- 【2026-09-30】设置分栏：一页一个分类（原来是一长条竖排，找东西要滚很久） -->
-        <div class="settings-tabs" id="settingsTabs" role="tablist">
-            <button class="settings-tab active" data-tab="appearance">外观显示</button>
-            <button class="settings-tab" data-tab="timer">计时与提醒</button>
-            <button class="settings-tab" data-tab="float">悬浮窗</button>
-            <button class="settings-tab" data-tab="ai">AI 接入</button>
-            <button class="settings-tab" data-tab="webhook">表格同步</button>
-            <button class="settings-tab" data-tab="data">数据与备份</button>
-            <button class="settings-tab" data-tab="about">关于</button>
+        <!-- 【CR-030】标签栏横向滚动：左右箭头 + 可见滚动条，窄窗口下也能到达最后一页 -->
+        <div class="settings-tabs-wrap">
+            <button type="button" class="settings-tabs-arrow" id="settingsTabsPrev" title="向左滚动标签" aria-label="向左滚动标签">‹</button>
+            <div class="settings-tabs" id="settingsTabs" role="tablist">
+                <button class="settings-tab active" data-tab="appearance">外观显示</button>
+                <button class="settings-tab" data-tab="timer">计时与提醒</button>
+                <button class="settings-tab" data-tab="float">悬浮窗</button>
+                <button class="settings-tab" data-tab="ai">AI 接入</button>
+                <button class="settings-tab" data-tab="webhook">表格同步</button>
+                <button class="settings-tab" data-tab="data">数据与备份</button>
+                <button class="settings-tab" data-tab="about">关于</button>
+            </div>
+            <button type="button" class="settings-tabs-arrow" id="settingsTabsNext" title="向右滚动标签" aria-label="向右滚动标签">›</button>
         </div>
 
         <div class="settings-panes" id="settingsPanes">

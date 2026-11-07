@@ -5196,6 +5196,58 @@
         const settingsPanesEl = document.getElementById('settingsPanes');
         let currentSettingsTab = localStorage.getItem('settingsTab') || 'appearance';
 
+        // 【CR-030】设置标签栏横向滚动：滚动条可拖、左右箭头可点、垂直滚轮转横向。
+        // 面板 display:none 时 clientWidth 是 0，所以尺寸都要在面板显示后现算。
+        function settingsTabsMaxScroll() {
+            return settingsTabsEl ? Math.max(0, settingsTabsEl.scrollWidth - settingsTabsEl.clientWidth) : 0;
+        }
+
+        function updateSettingsTabsArrows() {
+            if (!settingsTabsEl) return;
+            const max = settingsTabsMaxScroll();
+            const prev = document.getElementById('settingsTabsPrev');
+            const next = document.getElementById('settingsTabsNext');
+            if (prev) prev.disabled = settingsTabsEl.scrollLeft <= 1;
+            if (next) next.disabled = settingsTabsEl.scrollLeft >= max - 1;
+            const wrap = settingsTabsEl.parentElement;
+            if (wrap) wrap.classList.toggle('no-overflow', max <= 1);
+        }
+
+        function scrollSettingsTabs(dir) {
+            if (!settingsTabsEl) return;
+            const step = Math.max(110, settingsTabsEl.clientWidth * 0.6);
+            settingsTabsEl.scrollBy({ left: dir * step, behavior: 'smooth' });
+        }
+
+        /** 把激活的 tab 滚进可见区（恢复上次所在页、或点了靠边的 tab 时） */
+        function scrollActiveSettingsTabIntoView() {
+            if (!settingsTabsEl || settingsTabsMaxScroll() <= 1) return;
+            const active = settingsTabsEl.querySelector('.settings-tab.active');
+            if (!active) return;
+            const left = active.offsetLeft;
+            const right = left + active.offsetWidth;
+            const viewL = settingsTabsEl.scrollLeft;
+            const viewR = viewL + settingsTabsEl.clientWidth;
+            if (left < viewL) settingsTabsEl.scrollLeft = Math.max(0, left - 8);
+            else if (right > viewR) settingsTabsEl.scrollLeft = right - settingsTabsEl.clientWidth + 8;
+        }
+
+        if (settingsTabsEl) {
+            const prevBtn = document.getElementById('settingsTabsPrev');
+            const nextBtn = document.getElementById('settingsTabsNext');
+            if (prevBtn) prevBtn.onclick = (e) => { e.stopPropagation(); scrollSettingsTabs(-1); };
+            if (nextBtn) nextBtn.onclick = (e) => { e.stopPropagation(); scrollSettingsTabs(1); };
+            settingsTabsEl.addEventListener('scroll', updateSettingsTabsArrows);
+            // 鼠标停在标签栏上滚垂直滚轮 = 横向移动；已经是横向手势就交给浏览器
+            settingsTabsEl.addEventListener('wheel', (e) => {
+                if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+                if (settingsTabsMaxScroll() <= 1) return;
+                e.preventDefault();
+                settingsTabsEl.scrollLeft += e.deltaY;
+            }, { passive: false });
+            window.addEventListener('resize', updateSettingsTabsArrows);
+        }
+
         function activateSettingsTab(name, persist) {
             if (!settingsTabsEl || !settingsPanesEl) return;
             const panes = Array.prototype.slice.call(settingsPanesEl.querySelectorAll('.settings-pane'));
@@ -5208,6 +5260,8 @@
             currentSettingsTab = name;
             if (persist !== false) localStorage.setItem('settingsTab', name);
             if (name === 'data') refreshDataStats();
+            scrollActiveSettingsTabIntoView();
+            updateSettingsTabsArrows();
         }
 
         if (settingsTabsEl) {
@@ -5873,6 +5927,9 @@
         settingsBtn.onclick = (e) => {
             e.stopPropagation();
             settingsPanel.classList.toggle('show');
+            // 面板刚显示时才有真实的 clientWidth，这时才能算滚动范围 / 箭头状态
+            updateSettingsTabsArrows();
+            scrollActiveSettingsTabIntoView();
             // 【2026-09-30】打开面板时，停在「数据与备份」页就顺手刷新占用统计
             if (settingsPanel.classList.contains('show') && currentSettingsTab === 'data') {
                 refreshDataStats();

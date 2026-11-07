@@ -102,19 +102,81 @@
         }
 
         /* ---------- 设置分栏（Tab） ---------- */
-        .settings-tabs {
+        /* 【CR-030】原来 .settings-tabs 用 scrollbar-width:none +
+           ::-webkit-scrollbar{height:0} 把横向滚动条彻底藏了起来，标签排不下时
+           看不到也拖不动，最后一页到不了。现在显式给出可拖的滚动条 + 左右箭头。 */
+        .settings-tabs-wrap {
             display: flex;
+            align-items: center;
             gap: 4px;
-            overflow-x: auto;
-            padding-bottom: 10px;
+            flex: 0 0 auto;
+            padding-bottom: 8px;
             margin-bottom: 10px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            scrollbar-width: none;
-            flex: 0 0 auto;
+        }
+
+        .settings-tabs {
+            position: relative;          /* 让 tab 的 offsetLeft 相对滚动容器算 */
+            display: flex;
+            gap: 4px;
+            flex: 1 1 auto;
+            min-width: 0;                /* flex item 不收缩的话 overflow-x 不会生效 */
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding-bottom: 6px;         /* 给横向滚动条留位置 */
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.28) rgba(255, 255, 255, 0.06);
+            scroll-behavior: smooth;
+            overscroll-behavior-x: contain;
         }
 
         .settings-tabs::-webkit-scrollbar {
-            height: 0;
+            height: 6px;
+        }
+
+        .settings-tabs::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.09);
+            border-radius: 3px;
+        }
+
+        .settings-tabs::-webkit-scrollbar-thumb {
+            background: rgba(160, 215, 240, 0.55);
+            border-radius: 3px;
+        }
+
+        .settings-tabs::-webkit-scrollbar-thumb:hover {
+            background: rgba(160, 215, 240, 0.8);
+        }
+
+        .settings-tabs-arrow {
+            flex: 0 0 22px;
+            width: 22px;
+            height: 28px;
+            padding: 0;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            color: #ccc;
+            font-size: 18px;
+            line-height: 1;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .settings-tabs-arrow:hover:not(:disabled) {
+            background: rgba(0, 161, 214, 0.2);
+            border-color: rgba(0, 161, 214, 0.5);
+            color: #7fdfff;
+        }
+
+        .settings-tabs-arrow:disabled {
+            opacity: 0.28;
+            cursor: default;
+        }
+
+        /* 标签排得下时把箭头藏掉，别白占两侧空间 */
+        .settings-tabs-wrap.no-overflow .settings-tabs-arrow {
+            display: none;
         }
 
         .settings-tab {
