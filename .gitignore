@@ -13,3 +13,7 @@ _testdata/
 
 # 探针截图（本地验证用，不进版本库）
 tests/manual/*.png
+
+# CR-031 瘦身归档：旧 app.asar 备份 + 移出的多语言包（体积大、可随时 --restore）
+.deploy-archive/
+.slim-archive/

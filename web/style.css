@@ -831,8 +831,8 @@
            各自夹一次：2000×1500 的图在 630px 宽的卡片里被夹成 614×200 —— 横向拉扁，
            看着就是「异常放大」。把 width/height 强制回 auto，只让浏览器按比例缩。
            表情包 / 附件预览（.preview-img / .emoji）有自己的固定尺寸，排除掉。 */
-        .note-input img:not(.preview-img):not(.emoji),
-        .comment-input img:not(.preview-img):not(.emoji) {
+        .note-input img:not(.preview-img):not(.emoji):not(.note-annotation-layer),
+        .comment-input img:not(.preview-img):not(.emoji):not(.note-annotation-layer) {
             width: auto !important;
             height: auto !important;
             /* inline 的图片会紧贴在文字尾巴上（实测左偏 88px，就是前面那行字的宽度），
@@ -843,7 +843,7 @@
 
         /* 评论区比新建输入框还窄，上限单独收一点（以前靠插入时写死的内联样式，
            现在内联去掉了，这里必须有兜底，否则评论里的图会撑满整块） */
-        .comment-input img:not(.preview-img):not(.emoji) {
+        .comment-input img:not(.preview-img):not(.emoji):not(.note-annotation-layer) {
             max-width: 100%;
             max-height: 160px;
             object-fit: contain;
@@ -1114,11 +1114,44 @@
 
         /* 同上：粘贴来的图常自带 width/height，必须让它们回到 auto，
            否则 max-width 与 max-height 各夹一次会把图横向拉扁 */
-        .note-content-editable img:not(.preview-img):not(.emoji) {
+        .note-content-editable img:not(.preview-img):not(.emoji):not(.note-annotation-layer) {
             width: auto !important;
             height: auto !important;
             display: block;
             margin: 6px 0;
+        }
+
+        /* 【CR-031】标注 = 独立透明图层，原件永久保留。
+           便签里带标注的图是一个不可编辑的原子块：底图 + 绝对定位的叠加层。
+           叠加层必须铺满底图的盒子，所以上面 CR-026 的 auto 尺寸规则显式排除了它。 */
+        .note-img-stack {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+            line-height: 0;
+            vertical-align: top;
+            /* 间距挂在容器上：底图若还带 margin，inline-block 会把上下 margin
+               一起算进高度，叠加层的 height:100% 就比底图高出一截。 */
+            margin: 6px 0;
+        }
+        .note-img-stack > .note-img-base {
+            display: block;
+            max-width: 100%;
+            margin: 0 !important;
+        }
+        .note-img-stack > .note-annotation-layer {
+            position: absolute !important;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            max-height: none !important;
+            margin: 0 !important;
+            border-radius: 8px;
+            object-fit: fill;
+            pointer-events: none;
+            display: block !important;
         }
 
         .context-menu {
@@ -1790,6 +1823,27 @@
             border-radius: 4px;
             box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
             pointer-events: none;
+        }
+
+        /* 大图里同样分两层：#modalImg 是原件，这一层只是盖上去的标注。
+           编辑时由 .is-editing 规则藏掉，避免和画布里的同一份涂鸦重影。 */
+        #modalOverlayImg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            max-height: none !important;
+            object-fit: fill;
+            border-radius: 4px;
+            box-shadow: none;
+            pointer-events: none;
+            z-index: 5;
+            display: none;
+        }
+        .wechat-img-viewport.is-editing #modalOverlayImg {
+            display: none !important;
         }
 
         /* 编辑态底部要给工具栏让位，否则工具栏会压住图片下沿，
@@ -2784,7 +2838,7 @@
 
         /* 表格视图里正文的图片：单元格本来就窄，给个更矮的上限，并且
            同样把 width/height 拉回 auto（粘贴来源常带固定尺寸） */
-        .table-content img:not(.preview-img):not(.emoji):not(.pasted-cell-img) {
+        .table-content img:not(.preview-img):not(.emoji):not(.note-annotation-layer):not(.pasted-cell-img) {
             display: block;
             width: auto !important;
             height: auto !important;

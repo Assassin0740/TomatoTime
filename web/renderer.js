@@ -561,6 +561,15 @@
             const imgs = tempDiv.getElementsByTagName('img');
             for (let i = 0; i < imgs.length; i++) {
                 const img = imgs[i];
+                // 【CR-031】标注叠加层不懒加载、不绑点击：它必须和底图同帧出现，
+                // 否则会闪一下占位图；src 直接就是 NoteImages 里的真实地址。
+                if (img.classList && img.classList.contains('note-annotation-layer')) {
+                    const ovSrc = img.getAttribute('data-src') || img.getAttribute('src') || '';
+                    if (ovSrc) img.setAttribute('src', ovSrc);
+                    img.removeAttribute('data-src');
+                    img.classList.remove('lazy-img');
+                    continue;
+                }
                 // 老数据里可能存着 width="2000" / style="width:1600px"，渲染时统一清掉，
                 // 否则每次重开都还是那张被拉扁的图。新粘贴的在插入时就清过了。
                 normalizeImgBox(img);
@@ -1404,6 +1413,8 @@
                         // 【2026-11-06】附件标签里的文件名 / 大小不参与 markdown 增强，
                         // 否则文件名带 _ * # 会被渲染成斜体、标题，标签就散了
                         if (child.classList && child.classList.contains('note-file-chip')) return;
+                        // 【CR-031】图片叠层是原子块，别让 markdown 增强走进去
+                        if (child.classList && child.classList.contains('note-img-stack')) return;
                         // AI / 接口写进来的内容可能直接是 HTML 标题、链接：
                         // 换成和 markdown 一样的样式，避免 <h1> 按浏览器默认尺寸把卡片撑爆
                         if (/^H[1-6]$/.test(child.tagName)) {
@@ -1699,18 +1710,22 @@
             let isPressing = false;
 
             // DOM 引用
-            let modal, modalImg, viewport, imgContainer, canvas, ctx;
+            let modal, modalImg, modalOverlayImg, viewport, imgContainer, canvas, ctx;
             let editBtn, editToolbar, actionSheet;
             let brushBtn, rectBtn, undoBtn, cancelBtn, doneBtn;
-            let copyBtn, sheetCancelBtn, toast;
+            let copyBtn, sheetCancelBtn, toast, clearBtn, restoreBtn;
             
             // 来源 Image 的引用，以便点击“完成”时回写
             let triggerSourceImg = null;
-            let originalImageSrc = ''; // 记录未修改前的底图，取消时恢复
+            let originalImageSrc = ''; // 记录未修改前的底图，取消时恢复（CR-031 后底图不再被改写）
+            /** CR-031：当前这张图的标注图层 URL；空串 = 没有标注 */
+            let currentAnnotationSrc = '';
+            let overlayProbe = null;
 
             function initDoms() {
                 modal = document.getElementById('imgModal');
                 modalImg = document.getElementById('modalImg');
+                modalOverlayImg = document.getElementById('modalOverlayImg');
                 viewport = document.getElementById('wechatViewport');
                 imgContainer = document.getElementById('wechatImgContainer');
                 canvas = document.getElementById('wechatPainterCanvas');
@@ -1728,6 +1743,8 @@
                 
                 copyBtn = document.getElementById('wechatCopyBtn');
                 sheetCancelBtn = document.getElementById('wechatSheetCancelBtn');
+                clearBtn = document.getElementById('wechatClearBtn');
+                restoreBtn = document.getElementById('wechatRestoreBtn');
                 toast = document.getElementById('wechatToast');
 
                 bindEvents();
@@ -1971,12 +1988,42 @@
                 });
 
                 cancelBtn.addEventListener('click', function() {
+                    // 底图从来没被改过，只要退出编辑并把原有标注层显示回来
+                    overlayProbe = null;
                     enterEditMode(false);
-                    modalImg.src = originalImageSrc; // 恢复原状
+                    syncModalOverlay();
                 });
 
                 doneBtn.addEventListener('click', function() {
                     finishEditing();
+                });
+
+                clearBtn.addEventListener('click', function() {
+                    // 「删掉编辑的内容」：拆掉叠层、便签里恢复成普通的一张原图
+                    if (restoreOriginalImage(triggerSourceImg)) {
+                        currentAnnotationSrc = '';
+                        overlayProbe = null;
+                        enterEditMode(false);
+                        syncModalOverlay();
+                        showToast('标注已删除，原件保留');
+                    } else {
+                        currentAnnotationSrc = '';
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        drawHistory = [];
+                        syncModalOverlay();
+                        showToast('已清空本次涂鸦');
+                    }
+                });
+
+                restoreBtn.addEventListener('click', function() {
+                    showActionSheet(false);
+                    if (restoreOriginalImage(triggerSourceImg)) {
+                        currentAnnotationSrc = '';
+                        syncModalOverlay();
+                        showToast('已恢复原件，标注已删除');
+                    } else {
+                        showToast('这张图没有标注');
+                    }
                 });
 
                 // 4. ActionSheet 复制事件
@@ -2027,6 +2074,8 @@
 
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     drawHistory = [];
+                    syncModalOverlay();          // 编辑态由 CSS 藏掉这一层
+                    loadExistingAnnotationIntoCanvas();
 
                     editBtn.style.display = 'none';
                     editToolbar.classList.add('show');
@@ -2036,58 +2085,107 @@
                     canvas.style.display = 'none';
                     editBtn.style.display = 'block';
                     editToolbar.classList.remove('show');
+                    syncModalOverlay();
                 }
             }
 
+            /** 把当前标注图层同步到大图容器；编辑态由 CSS 的 !important 强制隐藏 */
+            function syncModalOverlay() {
+                if (!modalOverlayImg) return;
+                if (currentAnnotationSrc) {
+                    if (modalOverlayImg.getAttribute('src') !== currentAnnotationSrc) {
+                        modalOverlayImg.src = currentAnnotationSrc;
+                    }
+                    modalOverlayImg.style.display = 'block';
+                } else {
+                    modalOverlayImg.removeAttribute('src');
+                    modalOverlayImg.style.display = 'none';
+                }
+                if (clearBtn) clearBtn.style.display = currentAnnotationSrc ? '' : 'none';
+                if (restoreBtn) restoreBtn.style.display = currentAnnotationSrc ? '' : 'none';
+            }
+
+            /** 继续编辑已有标注：把透明图层铺回画布，撤销能回到这一帧 */
+            function loadExistingAnnotationIntoCanvas() {
+                if (!currentAnnotationSrc) return;
+                const probe = new Image();
+                overlayProbe = probe;
+                probe.onload = function () {
+                    if (overlayProbe !== probe || !isEditing) return;
+                    try {
+                        ctx.drawImage(probe, 0, 0, canvas.width, canvas.height);
+                        if (drawHistory.length === 0) {
+                            drawHistory.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+                        }
+                    } catch (e) { /* 坏图 / 跨域就当没有标注 */ }
+                };
+                probe.src = currentAnnotationSrc;
+            }
+
+            /**
+             * 【CR-031】完成标注：只产出一个透明 PNG 图层，不再合成覆盖底图。
+             *
+             * 旧实现把底图和涂鸦 merge 成一张 PNG 后直接写 triggerSourceImg.src，
+             * 便签保存时原图引用就被合成图替换 —— 原件找不回来，标注也没法单独删。
+             * 现在：底图 <img src> 永远不动；涂鸦单独导出成透明 PNG 落到 NoteImages/，
+             * 便签里用 .note-img-stack 把两层叠起来；复制 / 导出时才按需合成。
+             */
             function finishEditing() {
-                // 合成底图和画板图，以底图的真实原始像素尺寸 (naturalWidth x naturalHeight) 为准，确保清晰度不被压缩！
                 const naturalW = modalImg.naturalWidth;
                 const naturalH = modalImg.naturalHeight;
-                
-                const mergeCanvas = document.createElement('canvas');
-                mergeCanvas.width = naturalW;
-                mergeCanvas.height = naturalH;
-                const mergeCtx = mergeCanvas.getContext('2d');
-
-                // 2. 绘制高清原图
-                mergeCtx.drawImage(modalImg, 0, 0);
-
-                // 3. 把画板涂鸦精确铺满原图。
-                //    用 drawImage 的目标尺寸一次映射，而不是先 scale 再画：
-                //    画布宽高比只要和图片差一点点（取整、容器高度差异），scale 就会
-                //    按两个不同的比例缩放，笔迹在原图上是歪的。
-                mergeCtx.drawImage(canvas, 0, 0, naturalW, naturalH);
-
-                // 4. 导出合并图
-                const finalDataUrl = mergeCanvas.toDataURL('image/png');
-                modalImg.src = finalDataUrl;
-
-                // 5. 将编辑后的图片回写到触发它的原网页图片中
-                if (triggerSourceImg) {
-                    triggerSourceImg.src = finalDataUrl;
-                    
-                    // 触发可能挂载在原 Image 上的 change 或是 input 事件，保证如果它是便签的，便签会自动存档！
-                    triggerSourceImg.dispatchEvent(new Event('input', { bubbles: true }));
-                    triggerSourceImg.dispatchEvent(new Event('change', { bubbles: true }));
-                    
-                    // 检查便签应用是否提供了全局更新笔记接口
-                    setTimeout(() => {
-                        const noteEditable = triggerSourceImg.closest('[contenteditable="true"]');
-                        if (noteEditable) {
-                            noteEditable.dispatchEvent(new Event('input', { bubbles: true }));
-                            const noteIdAttr = noteEditable.getAttribute('id'); 
-                            if (noteIdAttr && window.updateTableNote) {
-                                const match = noteIdAttr.match(/\d+/);
-                                if (match) {
-                                    window.updateTableNote(match[0], noteEditable);
-                                }
-                            }
-                        }
-                    }, 100);
+                if (!naturalW || !naturalH) {
+                    enterEditMode(false);
+                    showToast('图片还没加载好');
+                    return;
                 }
 
-                enterEditMode(false);
-                showToast("编辑已保存");
+                const layer = document.createElement('canvas');
+                layer.width = naturalW;
+                layer.height = naturalH;
+                const layerCtx = layer.getContext('2d');
+                // 只画涂鸦，其余像素保持全透明 —— 这才是「盖上去的另一张图片」。
+                // 同 CR-027：用目标尺寸一次映射，避免两轴不同比例把笔迹拉歪。
+                layerCtx.drawImage(canvas, 0, 0, naturalW, naturalH);
+                const layerDataUrl = layer.toDataURL('image/png');
+
+                const done = (url) => {
+                    currentAnnotationSrc = url;
+                    enterEditMode(false);
+                    syncModalOverlay();
+                    if (triggerSourceImg) applyAnnotationStack(triggerSourceImg, url);
+                    showToast('标注已保存为独立图层（原件保留）');
+                };
+
+                // 落盘到 NoteImages/：便签 HTML 里只留一个短 file:// 引用，
+                // 不把整张 PNG 的 base64 塞进 localStorage；同内容还会 SHA-256 去重。
+                const ipc = (typeof getIpc === 'function') ? getIpc() : null;
+                if (ipc && typeof ipc.invoke === 'function') {
+                    ipc.invoke('save-note-image', layerDataUrl).then(done).catch(() => done(layerDataUrl));
+                } else {
+                    done(layerDataUrl); // 网页版没有主进程，退回 data URL
+                }
+            }
+
+            /** 复制 / 导出时才把「原件 + 标注层」合成；数据本身永远分层保存 */
+            function compositeCurrentImage() {
+                const baseSrc = modalImg.getAttribute('data-src') || modalImg.src;
+                if (!currentAnnotationSrc) return Promise.resolve(baseSrc);
+                return new Promise(resolve => {
+                    const ov = new Image();
+                    ov.onload = () => {
+                        try {
+                            const c = document.createElement('canvas');
+                            c.width = modalImg.naturalWidth;
+                            c.height = modalImg.naturalHeight;
+                            const cx = c.getContext('2d');
+                            cx.drawImage(modalImg, 0, 0);
+                            cx.drawImage(ov, 0, 0, c.width, c.height);
+                            resolve(c.toDataURL('image/png'));
+                        } catch (e) { resolve(baseSrc); }
+                    };
+                    ov.onerror = () => resolve(baseSrc);
+                    ov.src = currentAnnotationSrc;
+                });
             }
 
             function showActionSheet(show) {
@@ -2106,14 +2204,15 @@
              * 因此复制出来的图可以直接粘进微信。
              */
             function copyImageToClipboard() {
-                const src = modalImg.getAttribute('data-src') || modalImg.src;
-                if (!src) return;
                 showActionSheet(false);
-                if (typeof copyImageToSystemClipboard === 'function') {
-                    copyImageToSystemClipboard(src, 'bitmap');
-                    return;
-                }
-                showToast('当前环境不支持复制到系统剪贴板');
+                compositeCurrentImage().then(src => {
+                    if (!src) return;
+                    if (typeof copyImageToSystemClipboard === 'function') {
+                        copyImageToSystemClipboard(src, 'bitmap');
+                        return;
+                    }
+                    showToast('当前环境不支持复制到系统剪贴板');
+                });
             }
 
             function showToast(message) {
@@ -2129,6 +2228,10 @@
                 setTimeout(() => {
                     modal.style.display = 'none';
                     enterEditMode(false);
+                    currentAnnotationSrc = '';
+                    triggerSourceImg = null;
+                    overlayProbe = null;
+                    syncModalOverlay();
                 }, 200);
             }
 
@@ -2139,8 +2242,14 @@
                     initDoms();
                 }
                 
-                triggerSourceImg = (e && e.target && e.target.tagName === 'IMG') ? e.target : null;
+                const hit = e && e.target;
+                const stack = hit && hit.closest ? hit.closest('.note-img-stack') : null;
+                triggerSourceImg = (stack && stack.querySelector('.note-img-base')) ||
+                    ((hit && hit.tagName === 'IMG') ? hit : null);
                 originalImageSrc = src;
+                // 从便签里带标注的图层打开时，把图层一起带进大图
+                currentAnnotationSrc = (triggerSourceImg && triggerSourceImg.getAttribute('data-annotation')) || '';
+                syncModalOverlay();
 
                 currentScale = 1;
                 currentTranslate = { x: 0, y: 0 };
@@ -2247,6 +2356,64 @@
             return parseInt(el.getAttribute('data-note-id'));
         }
 
+        /**
+         * 【CR-031】标注叠加层的 DOM 操作，三处共用：
+         *   · finishEditing()       保存新图层
+         *   · 编辑工具栏「删除标注」 / ActionSheet「恢复原图」
+         *   · 便签正文右键「恢复原图」
+         * 关键约束：底图 <img src> 全程不改，原件永远在。
+         */
+        function applyAnnotationStack(baseImg, overlayUrl) {
+            if (!baseImg || !overlayUrl || !baseImg.parentNode) return;
+            let stack = baseImg.closest ? baseImg.closest('.note-img-stack') : null;
+            if (!stack) {
+                stack = document.createElement('span');
+                stack.className = 'note-img-stack';
+                stack.setAttribute('contenteditable', 'false');
+                stack.setAttribute('data-note-img-stack', '1');
+                baseImg.parentNode.insertBefore(stack, baseImg);
+                stack.appendChild(baseImg);
+                baseImg.classList.add('note-img-base');
+                const ov = document.createElement('img');
+                ov.className = 'note-annotation-layer';
+                ov.alt = '';
+                stack.appendChild(ov);
+            }
+            stack.querySelector('.note-annotation-layer').setAttribute('src', overlayUrl);
+            baseImg.setAttribute('data-annotation', overlayUrl);
+            commitImageChange(baseImg);
+        }
+
+        /** 恢复原件：拆掉叠层、还原成普通的一张 <img>，并触发便签保存 */
+        function restoreOriginalImage(baseImg) {
+            if (!baseImg) return false;
+            const stack = baseImg.closest ? baseImg.closest('.note-img-stack') : null;
+            if (!stack) {
+                if (!baseImg.getAttribute('data-annotation')) return false;
+                baseImg.removeAttribute('data-annotation');
+                commitImageChange(baseImg);
+                return true;
+            }
+            const base = stack.querySelector('.note-img-base') || baseImg;
+            base.removeAttribute('data-annotation');
+            base.classList.remove('note-img-base');
+            stack.replaceWith(base);
+            commitImageChange(base);
+            return true;
+        }
+
+        /** 图片 DOM 改完后，把内容写回 note.content（卡片 / 表格两种视图都吃 id） */
+        function commitImageChange(img) {
+            if (!img) return;
+            img.dispatchEvent(new Event('input', { bubbles: true }));
+            img.dispatchEvent(new Event('change', { bubbles: true }));
+            const editable = img.closest && img.closest('[contenteditable="true"]');
+            if (!editable) return;
+            editable.dispatchEvent(new Event('input', { bubbles: true }));
+            const noteId = noteIdOfEditable(editable);
+            if (!isNaN(noteId)) updateTableNote(noteId, editable);
+        }
+
         // 【2026-11-06 CR-028】便签正文里粘贴的 <img> 右键，也要能送进创作台的内嵌应用。
         // 之前只有附件 chip（.note-file-chip）接了 provider 表，正文图片右键菜单里
         // 只有「复制图片 / 推送到表格」，用户自然觉得「打不开刚刚说的那些软件」。
@@ -2323,6 +2490,11 @@
             currentEditableElement = editable;
             currentContextImage = target.tagName === 'IMG' ? target : null;
             fillCraftMenu(currentContextImage);
+            const restoreItem = document.getElementById('restoreImageItem');
+            if (restoreItem) {
+                restoreItem.style.display = (currentContextImage &&
+                    currentContextImage.getAttribute('data-annotation')) ? 'block' : 'none';
+            }
 
             const menu = document.getElementById('contextMenu');
             const copyItem = document.getElementById('copyImageItem');
@@ -2566,6 +2738,15 @@
             document.getElementById('contextMenu').classList.remove('show');
             if (!img) return;
             copyImageToSystemClipboard(resolveImgSrc(img), 'file');
+        };
+
+        // 【CR-031】右键直接恢复原件，把标注层删掉
+        document.getElementById('restoreImageItem').onclick = () => {
+            const img = currentContextImage;
+            document.getElementById('contextMenu').classList.remove('show');
+            if (!img) return;
+            if (restoreOriginalImage(img)) showAppToast('已恢复原件，标注已删除');
+            else showAppToast('这张图没有标注');
         };
 
         // 把这条任务推送到外部表格（WebHook）

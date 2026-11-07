@@ -582,6 +582,8 @@
                 <div class="context-menu-item" id="pasteImageItem">粘贴图片</div>
                 <div class="context-menu-item" id="copyImageItem" style="display: none;">复制图片</div>
                 <div class="context-menu-item" id="copyImageFileItem" style="display: none;">复制为文件（微信兼容）</div>
+                <!-- CR-031：只有带标注图层的图片才显示，点了就把原件恢复回来 -->
+                <div class="context-menu-item" id="restoreImageItem" style="display: none;">恢复原图（删除标注）</div>
                 <!-- 便签里的图片也能直接送进创作台的内嵌应用（CR-028） -->
                 <div class="context-menu-sep" id="craftOpenSep" style="display: none;"></div>
                 <div id="craftOpenGroup"></div>
@@ -624,6 +626,8 @@
         <div class="wechat-img-viewport" id="wechatViewport">
             <div class="wechat-img-container" id="wechatImgContainer">
                 <img id="modalImg" src="" alt="大图">
+                <!-- 【CR-031】标注是独立透明图层，盖在原件上；modalImg.src 永远是原图 -->
+                <img id="modalOverlayImg" src="" alt="" aria-hidden="true">
                 <canvas id="wechatPainterCanvas"></canvas>
             </div>
         </div>
@@ -647,6 +651,7 @@
             </div>
             
             <div style="display: flex; align-items: center; gap: 10px;">
+                <button class="wechat-tool-btn" id="wechatClearBtn" style="display:none;background:rgba(244,67,54,0.15);color:#ef9a9a;border-color:rgba(244,67,54,0.3);">删除标注</button>
                 <button class="wechat-tool-btn" id="wechatUndoBtn" style="background:rgba(255,255,255,0.05);">撤销</button>
                 <button class="wechat-tool-btn" id="wechatCancelBtn" style="background:rgba(244,67,54,0.15); color:#ef9a9a; border-color:rgba(244,67,54,0.3);">取消</button>
                 <button class="wechat-tool-btn" id="wechatDoneBtn" style="background:rgba(76,175,80,0.2); color:#a5d6a7; border-color:rgba(76,175,80,0.3);">完成</button>
@@ -655,7 +660,8 @@
 
         <!-- 微信底部 ActionSheet 菜单 -->
         <div class="wechat-action-sheet" id="wechatActionSheet">
-            <button class="wechat-sheet-item" id="wechatCopyBtn">复制图片</button>
+            <button class="wechat-sheet-item" id="wechatCopyBtn">复制图片（含标注）</button>
+            <button class="wechat-sheet-item" id="wechatRestoreBtn" style="display:none;">恢复原图（删除标注）</button>
             <button class="wechat-sheet-item cancel" id="wechatSheetCancelBtn">取消</button>
         </div>
 
