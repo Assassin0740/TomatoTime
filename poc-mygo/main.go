@@ -106,8 +106,8 @@ func main() {
 		// ── ② 悬浮窗：对应现计时器 float 窗口的全套特性 ─────────────
 		floatWin = mygo.NewWindow(mygo.WindowOptions{
 			Title:       "PoC 悬浮窗",
-			Width:       320,
-			Height:      180,
+			Width:       380,
+			Height:      100,
 			X:           80,
 			Y:           80,
 			Frameless:   true,
@@ -125,7 +125,7 @@ func main() {
 				log.Println("[poc][float] SetIgnoreMouseEvents(false) ✓ 恢复可交互")
 			})
 		})
-		floatWin.Page().LoadHTML(floatHTML, "")
+		floatWin.Page().LoadFile(`E:\Programs\计时器\poc-mygo\poc-float.html`)
 		log.Println("[poc][float] 悬浮窗已创建（Frameless+Transparent+AlwaysOnTop+SkipTaskbar）")
 
 		// ── ③ 全局快捷键（必须在 App.Run 之后注册）────────────────

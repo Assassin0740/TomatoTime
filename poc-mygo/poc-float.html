@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html style="overflow: hidden; background: transparent;">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+            user-select: none;
+        }
+        html {
+            overflow: hidden;
+            background: transparent;
+        }
+        body {
+            background: transparent;
+            color: #fff;
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            -webkit-app-region: no-drag;
+        }
+        body.with-background {
+            background: rgba(20, 20, 30, 0.95);
+            border-radius: 8px;
+        }
+        /* 复位/打开时的定位提示：透明窗口在浅色壁纸上几乎看不见，先亮一圈虚线再淡出 */
+        body.float-flash::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            border: 2px dashed #00a1d6;
+            border-radius: 10px;
+            box-shadow: 0 0 0 2px rgba(0, 161, 214, 0.25), inset 0 0 24px rgba(0, 161, 214, 0.18);
+            pointer-events: none;
+            animation: float-flash-fade 2.6s ease-out forwards;
+            z-index: 99;
+        }
+        @keyframes float-flash-fade {
+            0% { opacity: 0; }
+            12% { opacity: 1; }
+            75% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        #container {
+            position: relative;
+            z-index: 1;
+            padding: 0 16px;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            gap: 16px;
+        }
+        #timer-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        #divider {
+            width: 1px;
+            height: 60%;
+            background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.15) 20%, rgba(255, 255, 255, 0.15) 80%, transparent);
+            flex-shrink: 0;
+        }
+        #task-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: center;
+            flex-grow: 1;
+            min-width: 0;
+            height: 100%;
+            padding: 8px 0;
+            gap: 6px;
+        }
+        #task-header {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            letter-spacing: 1px;
+            user-select: none;
+        }
+        #task-content-wrapper {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            gap: 8px;
+            min-height: 24px;
+            position: relative;
+        }
+        #task-checkbox {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border: 1.5px solid rgba(255, 255, 255, 0.4);
+            border-radius: 4px;
+            outline: none;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+            background: transparent;
+        }
+        #task-checkbox:hover {
+            border-color: var(--glow-color, #00a1d6);
+            box-shadow: 0 0 8px var(--glow-color, rgba(0, 161, 214, 0.6));
+        }
+        #task-checkbox:checked {
+            background: var(--glow-color, #00a1d6);
+            border-color: var(--glow-color, #00a1d6);
+            box-shadow: 0 0 8px var(--glow-color, rgba(0, 161, 214, 0.6));
+        }
+        #task-checkbox:checked::after {
+            content: '✓';
+            position: absolute;
+            color: #fff;
+            font-size: 11px;
+            font-weight: bold;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #task-text {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            flex-grow: 1;
+            transition: all 0.2s;
+            user-select: text;
+        }
+        #task-text:hover {
+            color: var(--glow-color, #00a1d6);
+            text-shadow: 0 0 5px var(--glow-color, rgba(0, 161, 214, 0.3));
+        }
+        #task-text.completed {
+            text-decoration: line-through;
+            color: rgba(255, 255, 255, 0.35);
+            transition: all 0.5s ease-out;
+        }
+        #task-input {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1.5px solid var(--glow-color, #00a1d6);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            padding: 3px 8px;
+            outline: none;
+            width: 100%;
+            height: 24px;
+            font-family: inherit;
+        }
+        #task-footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.3);
+            user-select: none;
+            margin-top: 2px;
+        }
+        .task-nav-btn {
+            cursor: pointer;
+            padding: 0 6px;
+            transition: color 0.2s, transform 0.1s;
+            display: inline-block;
+        }
+        .task-nav-btn:hover {
+            color: var(--glow-color, #00a1d6);
+        }
+        .task-nav-btn:active {
+            transform: scale(0.85);
+        }
+        #task-nav-info {
+            font-family: monospace;
+            letter-spacing: 0.5px;
+        }
+        #label {
+            font-size: 12px;
+            color: #888;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+        body.with-background #label {
+            color: #888;
+        }
+        body:not(.with-background) #label {
+            color: rgba(255, 255, 255, 0.9);
+            text-shadow: 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5);
+        }
+        #time {
+            font-size: 40px;
+            font-weight: bold;
+            color: #fff;
+            letter-spacing: 2px;
+            text-shadow: var(--text-shadow, 0 0 0 transparent);
+        }
+        #time.glow {
+            text-shadow: var(--text-shadow, 0 0 0 transparent), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+        }
+        body:not(.with-background) #time.glow {
+            text-shadow: var(--text-shadow, 0 0 0 transparent), 0 0 5px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 0, 0, 0.5), 0 0 var(--glow-intensity, 15px) var(--glow-color, #00a1d6), 0 0 calc(var(--glow-intensity, 15px) * 2) var(--glow-color, #00a1d6);
+        }
+        #edit-input {
+            font-size: 40px;
+            font-weight: bold;
+            color: #00a1d6;
+            background: rgba(0,0,0,0.5);
+            border: 2px solid #00a1d6;
+            border-radius: 4px;
+            padding: 4px 12px;
+            text-align: center;
+            width: 140px;
+            outline: none;
+            -webkit-app-region: no-drag;
+        }
+        #float-image {
+            position: absolute;
+            bottom: 5px;
+            max-width: 80%;
+            max-height: 30%;
+            display: none;
+        }
+        /* ===== 当前任务里的图片 ===== */
+        #task-images {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            max-width: 100%;
+            min-width: 0;
+        }
+        #task-images img {
+            height: clamp(30px, 42vh, 64px);
+            max-width: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+            cursor: zoom-in;
+            transition: transform 0.15s, box-shadow 0.15s;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        #task-images img:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 14px var(--glow-color, rgba(0, 161, 214, 0.75));
+        }
+        /* 点击后在悬浮窗内临时放大，再点一次还原 */
+        #task-images img.zoomed {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: auto;
+            height: auto;
+            max-width: 96vw;
+            max-height: 96vh;
+            z-index: 9999;
+            cursor: zoom-out;
+            border-radius: 8px;
+            box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.8);
+        }
+        #task-images img.zoomed:hover {
+            transform: translate(-50%, -50%);
+        }
+        #task-images .task-img-more {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 2px 6px;
+            flex-shrink: 0;
+            align-self: center;
+        }
+        @media (max-width: 299px) {
+            #divider, #task-section {
+                display: none !important;
+            }
+            #container {
+                padding: 0;
+                justify-content: center;
+                gap: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- 左侧计时器栏 -->
+        <div id="timer-section">
+            <div id="label">工作时间</div>
+            <div id="time" class="glow">25:00</div>
+        </div>
+        
+        <!-- 中间分隔线 -->
+        <div id="divider"></div>
+        
+        <!-- 右侧任务区 -->
+        <div id="task-section">
+            <div id="task-header">当前任务</div>
+            <div id="task-content-wrapper">
+                <input type="checkbox" id="task-checkbox" class="interactive">
+                <span id="task-text" class="interactive" title="点击编辑此任务，打勾完成">暂无任务，点击输入...</span>
+                <input type="text" id="task-input" class="interactive" placeholder="输入并回车以添加任务...">
+            </div>
+            <div id="task-images" class="interactive"></div>
+            <div id="task-footer">
+                <span id="task-nav-prev" class="task-nav-btn interactive" title="上一个任务">◀</span>
+                <span id="task-nav-info">0 / 0</span>
+                <span id="task-nav-next" class="task-nav-btn interactive" title="下一个任务">▶</span>
+            </div>
+        </div>
+        
+        <img id="float-image" />
+    </div>
+
+    <script>
+        // PoC shim：替代 electron ipcRenderer，float.html 其余 900 行原封不动
+        const __handlers = {};
+        const ipcRenderer = {
+            on: (ch, fn) => { (__handlers[ch] = __handlers[ch] || []).push(fn); },
+            send: () => {},
+            invoke: async () => undefined
+        };
+        // 模拟主进程的 25 分钟工作倒计时推送，让界面活起来
+        let __sec = 25 * 60;
+        setInterval(() => {
+            __sec = __sec > 0 ? __sec - 1 : 25 * 60;
+            (__handlers['timer-status'] || []).forEach(fn => fn({}, { currentTime: __sec, isWorking: true }));
+        }, 1000);
+        
+        const timeEl = document.getElementById('time');
+        const labelEl = document.getElementById('label');
+        const floatImage = document.getElementById('float-image');
+        let withBackground = false;   // 默认透明，真实状态由主进程 set-background 推送
+        let isLocked = false;
+        let shadowColor = '#000000';
+        let shadowSize = 20;
+        let glowColor = '#00a1d6';
+        let glowIntensity = 15;
+        let glowEnabled = true;
+        let showTask = true;    // 是否显示任务区
+        let showImages = true;  // 是否显示任务里的图片
+        let imageLimit = 3;     // 最多显示几张图
+
+        function updateShadowStyle({ color, size } = {}) {
+            if (color !== undefined) shadowColor = color;
+            if (size !== undefined) shadowSize = size;
+            const s = parseInt(shadowSize, 10) || 0;
+            // 用真正的文字阴影（text-shadow），而不是 box-shadow —— 后者会在数字周围形成矩形光晕块
+            const textShadow = s > 0
+                ? `0 0 ${s / 2}px ${shadowColor}, 0 0 ${s}px ${shadowColor}`
+                : '0 0 0 transparent';
+            // 通过 CSS 变量下发，保证与「发光」效果叠加而不是互相覆盖
+            document.documentElement.style.setProperty('--text-shadow', textShadow);
+            labelEl.style.textShadow = textShadow;
+        }
+
+        function updateGlowStyle({ color, intensity, enabled } = {}) {
+            if (enabled !== undefined) {
+                glowEnabled = enabled;
+                if (glowEnabled) {
+                    timeEl.classList.add('glow');
+                } else {
+                    timeEl.classList.remove('glow');
+                }
+            }
+            if (color !== undefined) {
+                glowColor = color;
+                document.documentElement.style.setProperty('--glow-color', color);
+            }
+            if (intensity !== undefined) {
+                glowIntensity = parseInt(intensity);
+                document.documentElement.style.setProperty('--glow-intensity', glowIntensity + 'px');
+            }
+        }
+
+        updateShadowStyle();
+        updateGlowStyle();
+
+        // 根据窗口大小调整字体
+        function updateFontSize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const minSize = Math.min(width, height);
+            
+            // 时间字体占窗口高度的 50%
+            const timeFontSize = Math.max(20, minSize * 0.5);
+            // 标签字体占窗口高度的 15%
+            const labelFontSize = Math.max(8, minSize * 0.15);
+            
+            timeEl.style.fontSize = timeFontSize + 'px';
+            labelEl.style.fontSize = labelFontSize + 'px';
+            
+            // 如果有输入框，也调整
+            const editInput = document.getElementById('edit-input');
+            if (editInput) {
+                editInput.style.fontSize = timeFontSize + 'px';
+                editInput.style.width = (timeFontSize * 3.5) + 'px';
+            }
+        }
+        
+        window.addEventListener('resize', updateFontSize);
+        updateFontSize();
+        
+        ipcRenderer.on('time-update', (event, data) => {
+            labelEl.textContent = data.label;
+            timeEl.textContent = data.time;
+        });
+        
+        ipcRenderer.on('timer-status', (event, status) => {
+            const m = String(Math.floor(status.currentTime / 60)).padStart(2, '0');
+            const s = String(status.currentTime % 60).padStart(2, '0');
+            labelEl.textContent = status.isWorking ? '工作时间' : '休息时间';
+            timeEl.textContent = `${m}:${s}`;
+        });
+        
+        ipcRenderer.on('start-edit-time', () => {
+            if (!isLocked) {
+                startEdit();
+            }
+        });
+        
+        // 主进程明确告知背景开/关（窗口是透明还是靠不透明度模拟，也由主进程决定）
+        ipcRenderer.on('set-background', (event, on) => {
+            withBackground = !!on;
+            document.body.classList.toggle('with-background', withBackground);
+        });
+
+        ipcRenderer.on('toggle-background', () => {
+            withBackground = !withBackground;
+            document.body.classList.toggle('with-background', withBackground);
+        });
+
+        // 复位 / 居中打开时闪一下边框（主进程发的定位提示）
+        ipcRenderer.on('float-flash', () => {
+            document.body.classList.remove('float-flash');
+            void document.body.offsetWidth;   // 强制重排，让动画能重复播放
+            document.body.classList.add('float-flash');
+            setTimeout(() => document.body.classList.remove('float-flash'), 2700);
+        });
+        
+        ipcRenderer.on('set-locked', (event, locked) => {
+            isLocked = locked;
+        });
+
+        ipcRenderer.on('timer-color-update', (event, color) => {
+            timeEl.style.color = color;
+        });
+
+        ipcRenderer.on('shadow-style-update', (event, style) => {
+            if (style.color !== undefined) shadowColor = style.color;
+            if (style.size !== undefined) shadowSize = style.size;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('shadow-color-update', (event, color) => {
+            shadowColor = color;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('shadow-size-update', (event, size) => {
+            shadowSize = size;
+            updateShadowStyle();
+        });
+
+        ipcRenderer.on('glow-enabled-update', (event, enabled) => {
+            updateGlowStyle({ enabled });
+        });
+
+        ipcRenderer.on('glow-color-update', (event, color) => {
+            updateGlowStyle({ color });
+        });
+
+        ipcRenderer.on('glow-intensity-update', (event, intensity) => {
+            updateGlowStyle({ intensity });
+        });
+
+        ipcRenderer.on('set-float-image', (event, dataUrl) => {
+            if (dataUrl) {
+                floatImage.src = dataUrl;
+                floatImage.style.display = 'block';
+                localStorage.setItem('floatImageData', dataUrl);
+            } else {
+                floatImage.style.display = 'none';
+                localStorage.removeItem('floatImageData');
+            }
+        });
+
+        // 接收主窗口下发的「显示任务 / 显示图片 / 图片数量上限」设置
+        ipcRenderer.on('float-content-settings', (event, s) => {
+            if (!s) return;
+            if (s.showTask !== undefined) showTask = !!s.showTask;
+            if (s.showImages !== undefined) showImages = !!s.showImages;
+            if (typeof s.imageLimit === 'number' && s.imageLimit > 0) imageLimit = s.imageLimit;
+            applyContentSettings();
+        });
+
+        function startEdit() {
+            const currentTime = timeEl.textContent;
+            const [min, sec] = currentTime.split(':');
+            const inputValue = min + sec;
+            
+            const input = document.createElement('input');
+            input.id = 'edit-input';
+            input.type = 'text';
+            input.value = inputValue;
+            input.maxLength = 6;
+            input.style.fontSize = timeEl.style.fontSize;
+            input.style.width = (parseFloat(timeEl.style.fontSize) * 3.5) + 'px';
+            
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    submitEdit(input);
+                } else if (e.key === 'Escape') {
+                    input.remove();
+                }
+            });
+            
+            input.addEventListener('blur', () => {
+                submitEdit(input);
+            });
+            
+            timeEl.replaceWith(input);
+            input.select();
+        }
+        
+        function submitEdit(input) {
+            const value = input.value.trim();
+            const numValue = parseInt(value);
+            
+            if (!isNaN(numValue) && numValue >= 0) {
+                let totalSeconds;
+                
+                if (value.length <= 2) {
+                    totalSeconds = numValue * 60;
+                } else if (value.length <= 4) {
+                    const minutes = parseInt(value.substring(0, value.length - 2));
+                    const seconds = parseInt(value.substring(value.length - 2));
+                    totalSeconds = minutes * 60 + seconds;
+                } else {
+                    const minutes = parseInt(value.substring(0, value.length - 2));
+                    const seconds = parseInt(value.substring(value.length - 2));
+                    totalSeconds = minutes * 60 + seconds;
+                }
+                
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                
+                ipcRenderer.send('set-timer-time', { minutes: minutes, seconds: seconds });
+            }
+            
+            input.replaceWith(timeEl);
+        }
+        
+        // 处理拖放图片
+        document.addEventListener('dragover', (e) => {
+            if (!isLocked) {
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('drop', (e) => {
+            if (!isLocked) {
+                e.preventDefault();
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    const file = files[0];
+                    if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const dataUrl = event.target.result;
+                            floatImage.src = dataUrl;
+                            floatImage.style.display = 'block';
+                            localStorage.setItem('floatImageData', dataUrl);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                }
+            }
+        });
+
+        // 加载保存的图片
+        const savedImage = localStorage.getItem('floatImageData');
+        if (savedImage) {
+            floatImage.src = savedImage;
+            floatImage.style.display = 'block';
+        }
+        
+        // 只有没锁定的时候才处理拖动和菜单
+        let isMouseDown = false;
+
+        document.addEventListener('mousedown', function(e) {
+            const tag = e.target.tagName.toLowerCase();
+            const isInteractive = tag === 'input' || tag === 'button' || tag === 'a' || e.target.closest('.interactive') || e.target.closest('#edit-input');
+            if (!isLocked && e.button === 0 && !isInteractive) {
+                isMouseDown = true;
+                ipcRenderer.send('float-mousedown', {
+                    button: e.button,
+                    screenX: e.screenX,
+                    screenY: e.screenY
+                });
+            }
+        });
+        
+        document.addEventListener('mousemove', function(e) {
+            if (!isLocked && isMouseDown) {
+                ipcRenderer.send('float-mousemove', {
+                    screenX: e.screenX,
+                    screenY: e.screenY
+                });
+            }
+        });
+        
+        document.addEventListener('mouseup', function() {
+            if (!isLocked) {
+                isMouseDown = false;
+                ipcRenderer.send('float-mouseup');
+            }
+        });
+        
+        document.addEventListener('mouseleave', function() {
+            if (!isLocked) {
+                isMouseDown = false;
+                ipcRenderer.send('float-mouseup');
+            }
+        });
+        
+        document.addEventListener('contextmenu', function(e) {
+            if (!isLocked) {
+                e.preventDefault();
+                e.stopPropagation();
+                ipcRenderer.send('show-float-menu');
+            }
+        });
+        
+        // 悬浮窗任务管理事件监听及交互处理
+        let currentNotes = [];
+        let currentNoteIndex = 0;
+
+        function stripHtml(html) {
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = html;
+            let text = tmp.textContent || tmp.innerText || '';
+            // 任务内容支持 markdown，悬浮窗只显示纯文本：把标记符去掉，
+            // 留 * 号给「3 * 4」这种正常写法，只清成对出现的强调标记和行首语法
+            text = text
+                .replace(/\*\*([^\n]+?)\*\*/g, '$1')
+                .replace(/~~([^\n]+?)~~/g, '$1')
+                .replace(/`([^`\n]+)`/g, '$1')
+                .replace(/^[ \t]*#{1,6}[ \t]+/gm, '')
+                .replace(/^[ \t]*[-+][ \t]+/gm, '')
+                .replace(/^[ \t]*&gt;[ \t]?/gm, '')
+                .replace(/^[ \t]*>[ \t]?/gm, '')
+                .replace(/\[([^\]\n]{1,120})\]\((https?:\/\/[^)\s]{1,500})\)/g, '$1 $2');
+            return text;
+        }
+
+        function escapeHtmlText(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        // 悬浮窗只编辑纯文本，但任务原文里可能含图片 / 表情。
+        // 这里把原有 img 标签完整保留下来，避免「在悬浮窗改文字」把任务里的图片删掉。
+        function buildEditedContent(originalHtml, newText) {
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = originalHtml || '';
+            const keepImgs = Array.from(tmp.querySelectorAll('img')).map(img => img.outerHTML);
+            const safeText = escapeHtmlText(newText).replace(/\n/g, '<br>');
+            if (keepImgs.length === 0) return safeText;
+            return (safeText ? safeText + '<br>' : '') + keepImgs.join('');
+        }
+
+        // 应用「是否显示任务 / 是否显示图片」设置
+        function applyContentSettings() {
+            const taskSection = document.getElementById('task-section');
+            const divider = document.getElementById('divider');
+            if (taskSection) taskSection.style.display = showTask ? 'flex' : 'none';
+            if (divider) divider.style.display = showTask ? 'block' : 'none';
+            renderCurrentTask();
+        }
+
+        // 把任务内容里的图片取出来渲染（最多 imageLimit 张，超出显示 +N）
+        function renderTaskImages(html) {
+            const box = document.getElementById('task-images');
+            if (!box) return;
+            box.innerHTML = '';
+            if (!showImages) {
+                box.style.display = 'none';
+                return;
+            }
+            const tmp = document.createElement('DIV');
+            tmp.innerHTML = html || '';
+            const srcs = Array.from(tmp.querySelectorAll('img'))
+                .map(img => img.getAttribute('src'))
+                .filter(Boolean);
+
+            if (srcs.length === 0) {
+                box.style.display = 'none';
+                return;
+            }
+
+            box.style.display = 'flex';
+            srcs.slice(0, imageLimit).forEach(src => {
+                const img = document.createElement('img');
+                img.src = src;
+                img.className = 'interactive';
+                img.title = '点击放大 / 再次点击还原';
+                img.onclick = (e) => {
+                    e.stopPropagation();
+                    const isZoomed = img.classList.contains('zoomed');
+                    box.querySelectorAll('img.zoomed').forEach(i => i.classList.remove('zoomed'));
+                    if (!isZoomed) img.classList.add('zoomed');
+                };
+                img.onerror = () => { img.remove(); };
+                box.appendChild(img);
+            });
+
+            if (srcs.length > imageLimit) {
+                const more = document.createElement('span');
+                more.className = 'task-img-more';
+                more.textContent = '+' + (srcs.length - imageLimit);
+                more.title = `该任务还有 ${srcs.length - imageLimit} 张图片`;
+                box.appendChild(more);
+            }
+        }
+
+        function renderCurrentTask() {
+            const taskText = document.getElementById('task-text');
+            const taskCheckbox = document.getElementById('task-checkbox');
+            const taskInput = document.getElementById('task-input');
+            const navInfo = document.getElementById('task-nav-info');
+            const navPrev = document.getElementById('task-nav-prev');
+            const navNext = document.getElementById('task-nav-next');
+            
+            if (currentNotes.length === 0) {
+                taskCheckbox.style.display = 'none';
+                taskCheckbox.checked = false;
+                taskText.textContent = '暂无任务，点击输入...';
+                taskText.classList.remove('completed');
+                taskText.style.display = 'block';
+                taskInput.style.display = 'none';
+                navInfo.textContent = '0/0';
+                navPrev.style.visibility = 'hidden';
+                navNext.style.visibility = 'hidden';
+                currentNoteIndex = 0;
+                renderTaskImages('');
+                return;
+            }
+
+            if (currentNoteIndex < 0) currentNoteIndex = 0;
+            if (currentNoteIndex >= currentNotes.length) currentNoteIndex = currentNotes.length - 1;
+
+            const activeNote = currentNotes[currentNoteIndex];
+            const plainText = stripHtml(activeNote.content);
+
+            taskCheckbox.style.display = 'block';
+            taskCheckbox.checked = activeNote.done || false;
+            
+            if (activeNote.done) {
+                taskText.classList.add('completed');
+            } else {
+                taskText.classList.remove('completed');
+            }
+            
+            taskText.textContent = plainText || '无任务内容';
+            taskText.style.display = 'block';
+            taskInput.style.display = 'none';
+            renderTaskImages(activeNote.content);
+            
+            navInfo.textContent = `${currentNoteIndex + 1}/${currentNotes.length}`;
+            
+            if (currentNotes.length > 1) {
+                navPrev.style.visibility = 'visible';
+                navNext.style.visibility = 'visible';
+            } else {
+                navPrev.style.visibility = 'hidden';
+                navNext.style.visibility = 'hidden';
+            }
+        }
+
+        ipcRenderer.on('sync-notes-to-float', (event, notes) => {
+            const prevActiveNoteId = currentNotes[currentNoteIndex]?.id;
+            currentNotes = (notes || []).filter(n => !n.done);
+            
+            if (prevActiveNoteId) {
+                const newIdx = currentNotes.findIndex(n => n.id === prevActiveNoteId);
+                if (newIdx !== -1) {
+                    currentNoteIndex = newIdx;
+                } else {
+                    currentNoteIndex = 0;
+                }
+            } else {
+                currentNoteIndex = 0;
+            }
+            
+            renderCurrentTask();
+        });
+
+        ipcRenderer.send('request-notes-from-float');
+
+        const taskCheckbox = document.getElementById('task-checkbox');
+        taskCheckbox.addEventListener('change', () => {
+            if (currentNotes.length === 0) return;
+            const activeNote = currentNotes[currentNoteIndex];
+            const taskText = document.getElementById('task-text');
+            
+            if (taskCheckbox.checked) {
+                taskText.classList.add('completed');
+                taskText.style.opacity = '0.5';
+                setTimeout(() => {
+                    ipcRenderer.send('float-toggle-done', activeNote.id);
+                    taskText.style.opacity = '1';
+                }, 600);
+            } else {
+                taskText.classList.remove('completed');
+                ipcRenderer.send('float-toggle-done', activeNote.id);
+            }
+        });
+
+        document.getElementById('task-nav-prev').addEventListener('click', () => {
+            if (currentNotes.length <= 1) return;
+            currentNoteIndex = (currentNoteIndex - 1 + currentNotes.length) % currentNotes.length;
+            renderCurrentTask();
+        });
+
+        document.getElementById('task-nav-next').addEventListener('click', () => {
+            if (currentNotes.length <= 1) return;
+            currentNoteIndex = (currentNoteIndex + 1) % currentNotes.length;
+            renderCurrentTask();
+        });
+
+        const taskText = document.getElementById('task-text');
+        const taskInput = document.getElementById('task-input');
+
+        taskText.addEventListener('click', () => {
+            if (isLocked) return;
+            taskText.style.display = 'none';
+            taskInput.style.display = 'block';
+            
+            if (currentNotes.length > 0) {
+                const activeNote = currentNotes[currentNoteIndex];
+                taskInput.value = stripHtml(activeNote.content);
+            } else {
+                taskInput.value = '';
+            }
+            taskInput.focus();
+            taskInput.select();
+        });
+
+        function submitTaskEdit() {
+            const newContent = taskInput.value.trim();
+            if (currentNotes.length > 0) {
+                const activeNote = currentNotes[currentNoteIndex];
+                const originalHtml = activeNote.content || '';
+                if (newContent && newContent !== stripHtml(originalHtml)) {
+                    // 关键：保留任务原有的图片，避免在悬浮窗编辑文字时把图片一并覆盖丢失
+                    ipcRenderer.send('float-edit-note', {
+                        id: activeNote.id,
+                        content: buildEditedContent(originalHtml, newContent)
+                    });
+                }
+            } else {
+                if (newContent) {
+                    ipcRenderer.send('float-add-note', newContent);
+                }
+            }
+            taskInput.style.display = 'none';
+            taskText.style.display = 'block';
+        }
+
+        taskInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                submitTaskEdit();
+            } else if (e.key === 'Escape') {
+                taskInput.style.display = 'none';
+                taskText.style.display = 'block';
+            }
+        });
+
+        taskInput.addEventListener('blur', () => {
+            submitTaskEdit();
+        });
+
+        // 兜底：先从本地存储恢复显示设置（主窗口随后会推送最新值覆盖）
+        (function restoreLocalContentSettings() {
+            try {
+                const st = localStorage.getItem('floatShowTask');
+                if (st !== null) showTask = st === 'true';
+                const si = localStorage.getItem('floatShowImages');
+                if (si !== null) showImages = si === 'true';
+                const sl = parseInt(localStorage.getItem('floatImageLimit'), 10);
+                if (!isNaN(sl) && sl > 0) imageLimit = sl;
+            } catch (e) {}
+            applyContentSettings();
+        })();
+
+        ipcRenderer.send('get-timer-status');
+    </script>
+</body>
+</html>
