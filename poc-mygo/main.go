@@ -1,10 +1,11 @@
 // 计时器 PoC —— 验证 mygo 能否承载现有计时器
 //
 // 四项验证：
-//   ① 主窗口加载真实网页版计时器（web/index.html），并用 Page.Eval 无头取 DOM 证据
-//   ② 悬浮窗：Frameless + Transparent + AlwaysOnTop + SkipTaskbar + SetIgnoreMouseEvents
-//   ③ 托盘（Tray + Menu）与全局快捷键（Ctrl+Alt+P）
-//   ④ deep link：注册专用 timer-poc:// 协议（不碰创作台的 workbench://）
+//
+//	① 主窗口加载真实网页版计时器（web/index.html），并用 Page.Eval 无头取 DOM 证据
+//	② 悬浮窗：Frameless + Transparent + AlwaysOnTop + SkipTaskbar + SetIgnoreMouseEvents
+//	③ 托盘（Tray + Menu）与全局快捷键（Ctrl+Alt+P）
+//	④ deep link：注册专用 timer-poc:// 协议（不碰创作台的 workbench://）
 //
 // 全程只打日志，不改任何系统状态（协议注册可随时 Unregister）。
 package main
@@ -12,6 +13,8 @@ package main
 import (
 	_ "embed"
 	"log"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -44,6 +47,43 @@ const floatHTML = `<!doctype html>
   setInterval(() => { t.textContent = new Date().toLocaleTimeString('zh-CN', {hour12:false}); }, 500);
 </script>
 </body></html>`
+
+// ---- Win10 穿透：WS_EX_TRANSPARENT 直控，不经过 WS_EX_LAYERED ----
+
+var (
+	user32                = syscall.NewLazyDLL("user32.dll")
+	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
+	procSetWindowLongPtrW = user32.NewProc("SetWindowLongPtrW")
+	procEnumChildWindows  = user32.NewProc("EnumChildWindows")
+)
+
+const (
+	gwlExStyleWin    = uintptr(0xFFFFFFFFFFFFFFEC) // -20
+	wsExTransparentW = 0x00000020
+	wsExLayeredW     = 0x00080000
+)
+
+func setExBit(hwnd uintptr, bit uintptr, on bool) {
+	old, _, _ := procGetWindowLongPtrW.Call(hwnd, gwlExStyleWin)
+	var next uintptr
+	if on {
+		next = old | bit
+	} else {
+		next = old &^ bit
+	}
+	procSetWindowLongPtrW.Call(hwnd, gwlExStyleWin, next)
+}
+
+func setClickThrough(topHwnd uintptr, on bool) {
+	// 只打顶层：子窗口（Chrome_WidgetWin）被打 WS_EX_TRANSPARENT 后整窗渲染消失；
+	// 顶层带此位时 WindowFromPoint 直接跳过整棵树（Electron 同款行为）。
+	setExBit(topHwnd, wsExTransparentW, on)
+}
+
+func enumChildWindows(parent uintptr, fn func(uintptr)) {
+	cb := syscall.NewCallback(func(h uintptr, _ uintptr) uintptr { fn(h); return 1 })
+	procEnumChildWindows.Call(parent, cb, 0)
+}
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
@@ -117,15 +157,22 @@ func main() {
 		})
 		floatWin.Page().OnDOMReady(func() {
 			log.Println("[poc][float] DOM ready")
-			// 穿透开关：开 2 秒再关，证明可编程切换（对应锁定悬浮窗功能）
-			floatWin.SetIgnoreMouseEvents(true)
-			log.Println("[poc][float] SetIgnoreMouseEvents(true) ✓ 点击可穿透")
+			// 穿透开关：不用 mygo 的 SetIgnoreMouseEvents（它会 WS_EX_LAYERED 化窗口，
+			// Windows 一旦 layered 就回不去，重定向位图的逐像素 alpha 失效 → 白底）。
+			// 改为直接对顶层窗口 + WebView2 子窗口打 WS_EX_TRANSPARENT（Electron 同款做法）。
+			setClickThrough(floatWin.NativeHandle(), true)
+			log.Println("[poc][float] 顶层+子窗口 WS_EX_TRANSPARENT=true ✓ 点击可穿透")
 			time.AfterFunc(2*time.Second, func() {
-				floatWin.SetIgnoreMouseEvents(false)
-				log.Println("[poc][float] SetIgnoreMouseEvents(false) ✓ 恢复可交互")
+				setClickThrough(floatWin.NativeHandle(), false)
+				log.Println("[poc][float] WS_EX_TRANSPARENT=false ✓ 恢复可交互")
 			})
 		})
-		floatWin.Page().LoadFile(`E:\Programs\计时器\poc-mygo\poc-float.html`)
+		floatPage := os.Getenv("FLOAT_PAGE")
+		if floatPage == "" {
+			floatPage = `E:\Programs\计时器\poc-mygo\poc-float.html`
+		}
+		floatWin.Page().LoadFile(floatPage)
+
 		log.Println("[poc][float] 悬浮窗已创建（Frameless+Transparent+AlwaysOnTop+SkipTaskbar）")
 
 		// ── ③ 全局快捷键（必须在 App.Run 之后注册）────────────────
