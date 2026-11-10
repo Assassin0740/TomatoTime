@@ -138,6 +138,9 @@ const EXPR = `(async () => {
     const data = { rows: [['列一', '列二', '列三'], ['a', 'b', 'c'], ['d', 'e', 'f']], cols: 3, hasHeader: true };
     ed.innerHTML = window.ClipboardTable.rowsToTableHtml(data);
     document.body.appendChild(ed);
+    // 第一格里塞一张高图（模拟腾讯文档整格图片），验证「行拖多高图片长多大」
+    const ptImgTd = ed.querySelectorAll('tbody tr')[0].children[0];
+    ptImgTd.innerHTML = '<img class="pasted-cell-img" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MDAiIGhlaWdodD0iNjAwIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iIzQ0NSIvPjwvc3ZnPg==">';
     const pt = ed.querySelector('table.pasted-table');
     await sleep(50);
     const pth = pt.querySelectorAll('thead th')[1];
@@ -145,11 +148,15 @@ const EXPR = `(async () => {
     await drag(pth, { x: pr.right - 2, y: pr.top + 8 }, { x: pr.right + 60, y: pr.top + 8 });
     const ptr = pt.querySelectorAll('tbody tr')[0];
     const prr = ptr.getBoundingClientRect();
+    const imgBefore = parseFloat(ptImgTd.querySelector('img').style.maxHeight) || 110;
     await drag(ptr.children[1], { x: prr.left + 30, y: prr.bottom - 2 }, { x: prr.left + 30, y: prr.bottom + 40 });
+    const imgAfter = parseFloat(ptImgTd.querySelector('img').style.maxHeight) || 0;
     C.pastedTable = {
         colInline: pth.style.width.endsWith('px') && parseFloat(pth.style.width) > pr.width,
         rowInline: ptr.style.height.endsWith('px'),
         cellHeightInline: ptr.children[1].style.height.endsWith('px') && ptr.children[1].style.overflow === 'hidden',
+        imgGrewWithRow: imgAfter >= imgBefore + 30,
+        imgMaxHeightAfter: imgAfter,
         persistedInHtml: ed.innerHTML.includes('style=') && ed.innerHTML.includes('width:')
     };
 
@@ -231,7 +238,7 @@ const EXPR = `(async () => {
         C.rowDrag && C.rowDrag.heightChanged && C.rowDrag.overflowHidden && C.rowDrag.savedRow &&
         C.replay && C.replay.colRestored && C.replay.rowRestored &&
         C.pastedTable && C.pastedTable.colInline && C.pastedTable.rowInline &&
-        C.pastedTable.cellHeightInline && C.pastedTable.persistedInHtml &&
+        C.pastedTable.cellHeightInline && C.pastedTable.persistedInHtml && C.pastedTable.imgGrewWithRow &&
         C.resetCol && C.resetCol.inlineCleared && C.resetCol.storageCleared;
 
     console.log(pass ? '\nALL PASS ✓' : '\nFAIL ✗');

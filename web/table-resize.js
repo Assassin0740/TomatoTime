@@ -118,6 +118,39 @@
         });
     }
 
+    /**
+     * 【2026-11-10】行内图片自适应行高：拖行拖多大，图片就跟着长多大。
+     * CSS 把 .pasted-cell-img 钉死在 110px / 80px 上限，单元格拖大后图片不动；
+     * 这里给行内图片写内联 max-height = 单元格内容区高度（内联压过样式表，且随
+     * innerHTML 持久化），宽度仍受 max-width:100% 约束、等比缩放。
+     */
+    function updateRowImages(tr, h) {
+        if (!tr) return;
+        const imgs = tr.querySelectorAll('img');
+        for (let i = 0; i < imgs.length; i++) {
+            const img = imgs[i];
+            const cell = img.closest('td, th') || tr;
+            let padV = 12;
+            try {
+                const cs = getComputedStyle(cell);
+                padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) || 12;
+            } catch (e) { /* 非 DOM 环境兜底 */ }
+            img.style.maxHeight = Math.max(MIN_ROW, Math.round(h - padV)) + 'px';
+            img.style.maxWidth = '100%';
+        }
+    }
+
+    function clearRowImages(tr) {
+        if (!tr) return;
+        const imgs = tr.querySelectorAll('img');
+        for (let i = 0; i < imgs.length; i++) {
+            const img = imgs[i];
+            img.style.maxHeight = '';
+            img.style.maxWidth = '';
+            if (!img.getAttribute('style')) img.removeAttribute('style');
+        }
+    }
+
     function setRowHeight(tr, h) {
         if (!tr) return;
         tr.style.height = h + 'px';
@@ -128,6 +161,7 @@
             // 行高作为硬约束：内容超高就裁掉（不然 tr 的 height 只是下限，拖不矮）
             cell.style.overflow = 'hidden';
         }
+        updateRowImages(tr, h);
     }
 
     function clearRowHeight(tr) {
@@ -140,6 +174,7 @@
             cell.style.boxSizing = '';
             if (!cell.getAttribute('style')) cell.removeAttribute('style');
         }
+        clearRowImages(tr);
     }
 
     /** 哪些表格允许调：任务表格视图 + 笔记/输入框/批注里的表格 */
@@ -332,6 +367,8 @@
         clearColWidth: clearColWidth,
         setRowHeight: setRowHeight,
         clearRowHeight: clearRowHeight,
+        updateRowImages: updateRowImages,
+        clearRowImages: clearRowImages,
         isResizable: isResizable,
         applyTaskTableLayout: applyTaskTableLayout,
         MIN_COL: MIN_COL,
