@@ -6503,6 +6503,11 @@
             }
 
             bindLazyImages();
+
+            // 【2026-11-10】表格自由调宽高：重渲染后回放保存的列宽 / 行高
+            if (window.TableResize) {
+                TableResize.applyTaskTableLayout(document.querySelector('table.task-table'));
+            }
             
             // 处理表格加载更多哨兵显示
             const sentinel = document.getElementById('tableSentinel');

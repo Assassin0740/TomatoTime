@@ -3164,3 +3164,10 @@
             opacity: 0.42;
             pointer-events: none;
         }
+
+        /* 【2026-11-10】表格自由调宽高：拖拽列右边框 / 行下边框（逻辑在 table-resize.js）。
+           拖拽中禁止选中文本，防止把单元格内容选蓝；光标形状由 JS 按热区动态设置。 */
+        body.table-resizing {
+            user-select: none;
+            -webkit-user-select: none;
+        }
