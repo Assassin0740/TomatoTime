@@ -24,6 +24,7 @@
       "preload.js",
       "renderer.js",
       "clipboard-table.js",
+      "table-resize.js",
       "media-format.js",
       "sync-client.js",
       "style.css",

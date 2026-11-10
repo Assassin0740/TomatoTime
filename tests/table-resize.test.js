@@ -98,3 +98,23 @@ test('两版 CSS 都有拖拽期防选中规则', () => {
         assert.ok(read(f).includes('body.table-resizing'), f + ' 缺少 table-resizing 规则');
     });
 });
+
+/**
+ * 【2026-11-10 部署事故钉子】table-resize.js 忘加 electron-builder files 白名单，
+ * asar 里没有这个文件 → 应用内 404 → 拖拽完全不生效（本地源码和 web 版都正常，
+ * 只有装好的应用坏，和 web-dom 漏同步是同一类「本地永远踩不到」的坑）。
+ * 这里钉死：计时器.html 引用的每个本地脚本都必须在打包白名单里。
+ */
+test('计时器.html 引用的本地脚本全部在 electron-builder files 白名单里', () => {
+    const pkg = JSON.parse(read('package.json'));
+    const whitelist = JSON.stringify(pkg.build.files);
+    const html = read('计时器.html');
+    const srcs = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)]
+        .map(m => m[1])
+        .filter(src => !/^https?:/.test(src));
+    assert.ok(srcs.length > 0, '计时器.html 里没找到本地脚本引用');
+    srcs.forEach(src => {
+        assert.ok(whitelist.includes('"' + src + '"'),
+            '计时器.html 引用了 ' + src + '，但 package.json build.files 白名单里没有它 —— asar 打包会 404');
+    });
+});
