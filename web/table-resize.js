@@ -186,6 +186,61 @@
         return false;
     }
 
+    /**
+     * 【2026-11-11】把表格几何「冻结」成显式像素。
+     * 起因：auto 布局 + `.pasted-table { min-width:100% }` 下，给某一列写 width 只是
+     * 「偏好」，浏览器会在容器内重新分配——实测拖了 +118px，内联宽度写进去了，
+     * 但渲染宽度纹丝不动（用户说的「左右拉不动」）。
+     * 首次拖列时：量出每列当前渲染宽度 → 全部写成内联像素 + table-layout:fixed +
+     * 表宽=各列之和，之后拖哪列就真的变哪列（超宽由 .pasted-table-wrap 横向滚动兜底）。
+     */
+    function freezeTableLayout(table) {
+        if (!table || table.getAttribute('data-rsz-frozen')) return false;
+        if (!table.rows || !table.rows.length) return false;
+        // 只处理规整表（无 colspan/rowspan），合并单元格的表格不冻结，避免错列
+        for (let r = 0; r < table.rows.length; r++) {
+            const cells = table.rows[r].children;
+            for (let i = 0; i < cells.length; i++) {
+                if ((cells[i].colSpan || 1) > 1 || (cells[i].rowSpan || 1) > 1) return false;
+            }
+        }
+        const widths = [];
+        let total = 0;
+        const firstRow = table.rows[0];
+        for (let i = 0; i < firstRow.children.length; i++) {
+            const w = Math.round(firstRow.children[i].getBoundingClientRect().width);
+            widths.push(w);
+            total += w;
+        }
+        for (let r = 0; r < table.rows.length; r++) {
+            const cells = table.rows[r].children;
+            for (let i = 0; i < cells.length; i++) {
+                cells[i].style.width = (widths[i] || 60) + 'px';
+                cells[i].style.boxSizing = 'border-box';
+            }
+        }
+        table.style.tableLayout = 'fixed';
+        table.style.width = total + 'px';
+        table.style.minWidth = '0';
+        table.setAttribute('data-rsz-frozen', '1');
+        return true;
+    }
+
+    /** 双击恢复：把冻结的几何整体解开，交还给 CSS 默认布局 */
+    function unfreezeTableLayout(table) {
+        if (!table) return;
+        const cells = table.querySelectorAll('th, td');
+        for (let i = 0; i < cells.length; i++) {
+            cells[i].style.width = '';
+            cells[i].style.boxSizing = '';
+            if (!cells[i].getAttribute('style')) cells[i].removeAttribute('style');
+        }
+        table.style.tableLayout = '';
+        table.style.width = '';
+        table.style.minWidth = '';
+        table.removeAttribute('data-rsz-frozen');
+    }
+
     function isTaskTable(table) {
         return !!(table && table.matches && table.matches('table.task-table'));
     }
@@ -247,13 +302,17 @@
             e.preventDefault();
             e.stopPropagation();
             if (kind === 'col') {
+                // 内容表（笔记/粘贴表）先冻结几何，否则 auto 布局会把 width 当偏好、视觉上拖不动
+                if (!isTaskTable(table)) freezeTableLayout(table);
+                const startW = cell.getBoundingClientRect().width;
                 drag = {
                     kind: 'col',
                     table: table,
                     colIdx: logicalColIndex(cell),
                     cells: columnCells(table, logicalColIndex(cell)),
                     startX: e.clientX,
-                    startW: cell.getBoundingClientRect().width,
+                    startW: startW,
+                    startTableW: table.getBoundingClientRect().width,
                     lastW: 0
                 };
             } else {
@@ -277,6 +336,11 @@
             if (drag.kind === 'col') {
                 drag.lastW = clampSize(drag.startW + (e.clientX - drag.startX), MIN_COL);
                 setColWidth(drag.cells, drag.lastW);
+                // 冻结表：表宽跟着列宽同步增减，否则 fixed 布局会按比例缩放、列宽看起来又变了
+                if (drag.table.getAttribute('data-rsz-frozen')) {
+                    const nextTotal = drag.startTableW + (drag.lastW - drag.startW);
+                    drag.table.style.width = Math.round(nextTotal) + 'px';
+                }
             } else {
                 drag.lastH = clampSize(drag.startH + (e.clientY - drag.startY), MIN_ROW);
                 setRowHeight(drag.tr, drag.lastH);
@@ -331,11 +395,14 @@
             e.preventDefault();
             if (hit === 'col') {
                 const colIdx = logicalColIndex(cell);
-                clearColWidth(table, colIdx);
                 if (isTaskTable(table)) {
+                    clearColWidth(table, colIdx);
                     const layout = loadLayout();
                     delete layout.colWidths[colIdx];
                     saveLayout(layout);
+                } else {
+                    // 内容表：整体解冻，交还给 CSS 默认布局（auto + min-width:100%）
+                    unfreezeTableLayout(table);
                 }
             } else {
                 const tr = cell.closest('tr');
@@ -370,6 +437,8 @@
         updateRowImages: updateRowImages,
         clearRowImages: clearRowImages,
         isResizable: isResizable,
+        freezeTableLayout: freezeTableLayout,
+        unfreezeTableLayout: unfreezeTableLayout,
         applyTaskTableLayout: applyTaskTableLayout,
         MIN_COL: MIN_COL,
         MIN_ROW: MIN_ROW

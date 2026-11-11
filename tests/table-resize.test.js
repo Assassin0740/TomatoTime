@@ -79,7 +79,7 @@ test('web/table-resize.js 与主版本完全一致', () => {
 
 test('sw.js：版本升到 v2.2.7 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.2.8';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.2.9';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -91,6 +91,24 @@ test('两版 renderer.js 的 renderTable 都回放表格布局', () => {
             f + ' 缺少 applyTaskTableLayout 回放调用'
         );
     });
+});
+
+/**
+ * 【2026-11-11】内容表「左右拉不动」钉子：
+ * auto 布局 + .pasted-table{min-width:100%} 下，给某列写 width 只是偏好，浏览器
+ * 重新分配后视觉纹丝不动（实测内联 164px、渲染仍 44px）。拖列前必须冻结几何。
+ */
+test('内容表拖列前冻结几何（table-layout:fixed）', () => {
+    const src = read('table-resize.js');
+    assert.ok(src.includes('function freezeTableLayout'), '缺少 freezeTableLayout');
+    assert.ok(/if \(!isTaskTable\(table\)\) freezeTableLayout\(table\);/.test(src),
+        '拖列起点没有对内容表调用 freezeTableLayout');
+    assert.ok(src.includes("table.style.tableLayout = 'fixed'"));
+    assert.ok(src.includes("table.style.width = total + 'px'"));
+    assert.ok(src.includes('data-rsz-frozen'), '缺少冻结标记');
+    // 冻结后表宽必须跟着列宽同步增减，否则 fixed 布局会按比例缩放
+    assert.ok(/data-rsz-frozen'\)\) \{[\s\S]{0,200}table\.style\.width/.test(src),
+        '拖列时表宽没有随列宽同步更新');
 });
 
 test('两版 CSS 都有拖拽期防选中规则', () => {

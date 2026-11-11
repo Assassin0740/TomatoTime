@@ -160,6 +160,66 @@ const EXPR = `(async () => {
         persistedInHtml: ed.innerHTML.includes('style=') && ed.innerHTML.includes('width:')
     };
 
+    // 7) 真实场景：任务内容里的长 URL 表格（截图复现）——拖列必须让「渲染宽度」变宽，
+    //    而不只是内联 style 变了（auto 布局下表格宽度被 min-width:100% 锁死时会「拉不动」）
+    const narrow = document.createElement('div');
+    narrow.className = 'note-content-editable';
+    narrow.setAttribute('contenteditable', 'true');
+    narrow.style.width = '520px';
+    const longRows = [
+        ['渠道', '链接', '账号', '密码', '输入链接指引'],
+        ['oppo', 'http://open.oppomobile.com/new/developmentDoc/mobile', 'Shjyg uo 音,', 'Myjg 2502', 'OPPO小游戏开发者文档'],
+        ['vivo', 'https://dev.vivo.com.cn/documentCenter/doc/251', 'Yiguo @13k', 'Myjg 2502', 'https://dev.vivo.com.cn/documentCenter/doc/251'],
+        ['华为', 'https://developer.huawei.com/consumer/cn/doc/quickgame-rev', 'Shjyg uo 音,', 'Myjg 2502', 'https://developer.huawei.com/consumer/cn/doc']
+    ];
+    narrow.innerHTML = window.ClipboardTable.rowsToTableHtml({ rows: longRows, cols: 5, hasHeader: true });
+    document.body.appendChild(narrow);
+    await sleep(80);
+    const nt = narrow.querySelector('table.pasted-table');
+    const linkTh = nt.querySelectorAll('thead th')[1];
+    const linkTd = nt.querySelectorAll('tbody tr td')[1];
+    const linkWBefore = linkTh.getBoundingClientRect().width;
+    const ntr = linkTh.getBoundingClientRect();
+    await drag(linkTh, { x: ntr.right - 2, y: ntr.top + 6 }, { x: ntr.right + 118, y: ntr.top + 6 });
+    const linkWAfter = linkTh.getBoundingClientRect().width;
+    C.narrowTable = {
+        renderedGrew: linkWAfter - linkWBefore >= 50,
+        widthBefore: Math.round(linkWBefore),
+        widthAfter: Math.round(linkWAfter),
+        tableLayout: getComputedStyle(nt).tableLayout
+    };
+
+    // 7b) 完全复刻截图场景：表格视图里的一条任务，第一个 td 里有 .table-content + 长 URL 粘贴表
+    const taskTr = document.createElement('tr');
+    taskTr.setAttribute('data-note-id', '666');
+    const tcTd = document.createElement('td');
+    tcTd.setAttribute('style', 'text-align: left; vertical-align: top;');
+    const tcDiv = document.createElement('div');
+    tcDiv.className = 'table-content';
+    tcDiv.setAttribute('contenteditable', 'true');
+    tcDiv.innerHTML = window.ClipboardTable.rowsToTableHtml({ rows: longRows, cols: 5, hasHeader: true });
+    tcTd.appendChild(tcDiv);
+    taskTr.appendChild(tcTd);
+    tbody.appendChild(taskTr);
+    await sleep(100);
+    const it = tcDiv.querySelector('table.pasted-table');
+    const ith = it.querySelectorAll('thead th')[1];
+    const ib = ith.getBoundingClientRect();
+    await drag(ith, { x: ib.right - 2, y: ib.top + 4 }, { x: ib.right + 118, y: ib.top + 4 });
+    const ia = ith.getBoundingClientRect();
+    C.taskViewInnerTable = {
+        renderedGrew: (ia.width - ib.width) >= 50,
+        widthBefore: Math.round(ib.width),
+        widthAfter: Math.round(ia.width),
+        inlineWidth: ith.style.width || '(none)',
+        tableLayout: getComputedStyle(it).tableLayout,
+        tableWidthStyle: it.style.width || '(none)',
+        wrapClientW: it.parentElement.clientWidth,
+        tableScrollW: it.scrollWidth,
+        tdOverflow: getComputedStyle(tcTd).overflow,
+        tcOverflow: getComputedStyle(tcDiv).overflow
+    };
+
     // 6) 双击边缘恢复默认（列已变宽，必须重新量 rect）
     //    任务表格第 1 列
     await sleep(30);
@@ -239,6 +299,7 @@ const EXPR = `(async () => {
         C.replay && C.replay.colRestored && C.replay.rowRestored &&
         C.pastedTable && C.pastedTable.colInline && C.pastedTable.rowInline &&
         C.pastedTable.cellHeightInline && C.pastedTable.persistedInHtml && C.pastedTable.imgGrewWithRow &&
+        C.narrowTable && C.narrowTable.renderedGrew &&
         C.resetCol && C.resetCol.inlineCleared && C.resetCol.storageCleared;
 
     console.log(pass ? '\nALL PASS ✓' : '\nFAIL ✗');
