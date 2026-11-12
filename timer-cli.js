@@ -93,12 +93,13 @@ function mmss(sec) {
 
 function printTask(t, prefix = '') {
     const done = t.done ? '[x]' : '[ ]';
+    const project = t.project ? '  📁' + t.project : '';
     const remind = (t.remindAt || t.remind_at) ? '  ⏰' + fmtTime(t.remindAt || t.remind_at) : '';
     const comments = t.comments || [];
     const extra = comments.length ? `  💬${comments.length}` : '';
     let content = stripHtml(t.content).replace(/\n/g, ' / ');
     if (content.length > 80) content = content.slice(0, 80) + '…';
-    console.log(`${prefix}${done} #${t.id} [${priorityLabel(t.p)}|${t.type === 'long' ? '长期' : '短期'}] ${content}${remind}${extra}`);
+    console.log(`${prefix}${done} #${t.id} [${priorityLabel(t.p)}|${t.type === 'long' ? '长期' : '短期'}] ${content}${project}${remind}${extra}`);
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -203,6 +204,55 @@ function kvPairs(list, what) {
     return out;
 }
 
+// ---------------------------------------------------------------- 表格尺寸输出
+
+/** '2=60,3=80' → [{row:2,height:60},{row:3,height:80}]（行号从 1 开始，和界面一致） */
+function rowSpecs(list) {
+    const out = [];
+    (list || []).forEach(spec => {
+        String(spec).split(/[,，]/).forEach(pair => {
+            const p = pair.trim();
+            if (!p) return;
+            const i = p.indexOf('=');
+            const row = parseInt((i === -1 ? p : p.slice(0, i)).trim(), 10);
+            const height = parseInt((i === -1 ? '' : p.slice(i + 1)).trim(), 10);
+            if (isNaN(row) || isNaN(height)) fail('行高格式应为 行号=像素（如 2=60），收到：' + p);
+            out.push({ row: row, height: height });
+        });
+    });
+    return out;
+}
+
+/** 一张内容表格的尺寸摘要 */
+function printTableInfo(index, t) {
+    if (!t) return;
+    const kind = t.frozen ? '固定布局' : '自适应';
+    console.log('#%d  %d 行 × %d 列  ·  %s  ·  宽 %s',
+        index, t.rows, t.cols, kind, t.width || '(自动)');
+    if (t.hasSpan) console.log('    注意：含合并单元格，只能用 --width 调整体宽度');
+    const cols = (t.colWidths || []).map(w => (w === null || w === undefined ? '*' : w + 'px'));
+    if (cols.length) console.log('    列宽：%s', cols.join(' / '));
+    const rows = (t.rowHeights || []).map(h => (h === null || h === undefined ? '-' : h + 'px'));
+    if (rows.length) console.log('    行高：%s', rows.join(' / '));
+}
+
+/** 任务表格视图的 localStorage 布局摘要 */
+function printViewLayout(layout) {
+    const l = layout || {};
+    const cols = l.colWidths || {};
+    const rows = l.rowHeights || {};
+    const colKeys = Object.keys(cols).sort((a, b) => Number(a) - Number(b));
+    if (!colKeys.length && !Object.keys(rows).length) {
+        console.log('表格视图当前是默认列宽 / 行高（没有自定义记录）');
+        return;
+    }
+    console.log('列表头（列号从 0 开始）：%s',
+        colKeys.length ? colKeys.map(k => k + '=' + cols[k] + 'px').join('  ') : '默认');
+    if (Object.keys(rows).length) {
+        console.log('行高：%s', Object.keys(rows).map(k => '#' + k + '=' + rows[k] + 'px').join('  '));
+    }
+}
+
 // ---------------------------------------------------------------- 子命令
 
 const commands = {
@@ -221,7 +271,15 @@ const commands = {
     },
 
     async add(args) {
-        const body = { content: args.content, priority: parsePriority(args.priority), type: args.type };
+        // 【2026-11-12 修】以前无条件 parsePriority(args.priority)，不带 -p 直接报
+        // 「优先级必须是 high/medium/low，收到：undefined」—— 可选参数不该炸。
+        // 缺省按「低」处理，与 /api/tasks 的默认值（p=1）保持一致。
+        const body = {
+            content: args.content,
+            priority: args.priority === undefined ? 'low' : parsePriority(args.priority),
+            type: args.type
+        };
+        if (args.project !== undefined) body.project = String(args.project);
         const remind = parseRemind(args.remind);
         if (remind !== undefined) body.remindAt = remind;
         if (args.comment) body.comments = String(args.comment).split(/[|；;]/).filter(Boolean);
@@ -264,10 +322,11 @@ const commands = {
         if (args.append !== undefined) body.appendText = args.append;
         if (args.priority !== undefined) body.priority = parsePriority(args.priority);
         if (args.type !== undefined) body.type = args.type;
+        if (args.project !== undefined) body.project = String(args.project);
         if (args.remind !== undefined) body.remindAt = parseRemind(args.remind);
         if (args.image) body.images = imageSpecs(args.image);
         if (!Object.keys(body).length) {
-            fail('没有要修改的内容（用 --content / --append / --priority / --type / --remind / --image）');
+            fail('没有要修改的内容（用 --content / --append / --priority / --type / --project / --remind / --image）');
         }
         const data = needOk(await call(args, 'PATCH', '/api/tasks/' + args.id, body), '修改任务');
         console.log('已更新：');
@@ -447,6 +506,73 @@ const commands = {
         }
     },
 
+    // ---------------------------------------------------------------- 表格大小（2026-11-12）
+    /**
+     * 应用里有两类表格，都能从命令行调：
+     *   · 任务内容里的表格（笔记正文 / 评论 / 粘贴的表格）→ 走 /api/tasks/:id/table
+     *   · 任务表格视图（列表那种一张表看所有任务的）→ 走 /api/table-view（布局在 localStorage）
+     */
+    async table(args) {
+        const action = String(args.action || 'info').toLowerCase();
+
+        // ---- 任务表格视图（列宽按列号、行高按 noteId）----
+        if (action === 'view' || action === 'view-set' || action === 'view-reset') {
+            if (action === 'view-reset' || args.reset) {
+                needOk(await call(args, 'POST', '/api/table-view', { action: 'reset' }), '重置表格视图');
+                console.log('表格视图已恢复默认列宽 / 行高');
+                return;
+            }
+            const colWidths = kvPairs(args.col, '--col');
+            const rowHeights = kvPairs(args.row, '--row');
+            if (colWidths || rowHeights) {
+                const body = { action: 'set' };
+                if (colWidths) body.colWidths = colWidths;
+                if (rowHeights) body.rowHeights = rowHeights;
+                const r = needOk(await call(args, 'POST', '/api/table-view', body), '调整表格视图');
+                printViewLayout(r.layout);
+                return;
+            }
+            const r = needOk(await call(args, 'GET', '/api/table-view'), '读取表格视图布局');
+            printViewLayout(r.layout);
+            return;
+        }
+
+        // ---- 任务内容里的表格 ----
+        const id = parseInt(args.id, 10);
+        if (isNaN(id)) fail('缺少任务 id（写法：node timer-cli.js table info 1759000000000）');
+        const index = args.index === undefined ? 0 : Number(args.index);
+
+        if (action === 'info' || action === 'list' || action === 'get' || action === 'show') {
+            const r = needOk(await call(args, 'GET', '/api/tasks/' + id + '/table'), '读取表格');
+            console.log('任务 #%d 共 %d 张表', id, r.count || 0);
+            (r.tables || []).forEach((t, i) => printTableInfo(i, t));
+            return;
+        }
+
+        const body = { index: index, action: 'set' };
+        if (action === 'auto' || action === 'reset' || action === 'clear') {
+            body.action = 'auto';
+            body.auto = true;
+        } else if (action === 'set' || action === 'width' || action === 'size') {
+            // `table width 123 900` 这种省略 set 的写法也认
+            if (action === 'width' && args.value !== undefined && args.width === undefined) args.width = args.value;
+            if (args.width !== undefined) body.width = String(args.width);
+            if (args.cols !== undefined) body.cols = String(args.cols);
+            const rows = rowSpecs([].concat(args.rows || [], args.row || []));
+            if (rows.length) body.rows = rows;
+            if (body.width === undefined && body.cols === undefined && !body.rows) {
+                fail('没给要改的尺寸（可用 --width 900 / --width 80% / --cols 120,240,* / --rows 2=60）');
+            }
+        } else {
+            fail('未知动作：' + action + '（可用 info / set / auto / view）');
+        }
+
+        const r = needOk(await call(args, 'POST', '/api/tasks/' + id + '/table', body), '调整表格尺寸');
+        console.log('已更新任务 #%d（共 %d 张表）', id, r.count || 0);
+        (r.tables || []).forEach((t, i) => printTableInfo(i, t));
+        console.log('\n提示：表格宽度超过窗口时会被自动贴合显示；想完全交给 CSS 就 table auto %d', id);
+    },
+
     async schema(args) {
         const data = needOk(await call(args, 'GET', '/api/schema'), '读取接口说明');
         console.log('基地址：http://127.0.0.1:%d', loadConfig(args).port);
@@ -469,13 +595,13 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
 
 命令：
   status                          查看应用与计时器状态
-  add <内容> [-p high|medium|low] [-t short|long] [--remind 时间]
+  add <内容> [-p high|medium|low] [-t short|long] [--project 项目] [--remind 时间]
       [--image 路径或链接]... [--base64 dataURL] [--comment 文本] [--top]
                                   添加任务
   list [--scope active|archive|all] [--keyword 词] [--limit n]
                                   列出任务
   get <id>                        查看单条详情（含评论与图片）
-  update <id> [--content 文本] [--append 文本] [-p 级别] [-t 类型]
+  update <id> [--content 文本] [--append 文本] [-p 级别] [-t 类型] [--project 项目]
          [--remind 时间] [--image 路径或链接]...
                                   修改任务
   done <ids> [--undone]           完成 / 取消完成（ids 逗号分隔）
@@ -494,6 +620,18 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
                                       --record-ids-file 回填.json --json-file 配置片段.json）
                                   parse 只解析示例 JSON（--schema-file / --schema-json）
                                   test 发一条测试记录到表格
+  table <info|set|auto|view> [任务id] [参数]
+                                  内容表格的尺寸：
+                                    info <id>                    看每张表的行数/列数/列宽/行高
+                                    set  <id> --width 900        整表宽度（900 / 900px / 80%）
+                                             --cols 120,240,*    逐列像素宽（* = 自动）
+                                             --rows 2=60,3=80    行高（行号从 1 开始）
+                                             [--index 0]         第几张表（默认第一张）
+                                    auto <id>                    解冻，恢复自适应布局
+                                  任务表格视图：
+                                    view                         看列宽 / 行高
+                                    view --col 3=200 --row <noteId>=80   设置
+                                    view --reset                 恢复默认
   settings [key] [value]          读写应用设置
   schema                          打印 HTTP API 自描述
 
@@ -507,14 +645,17 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
 function parseArgs(argv) {
     const args = { _: [] };
     const optionSingles = new Set(['--port', '--token', '--keyword', '--limit', '--scope', '--remind',
-        '--content', '--append', '--priority', '--image', '--base64', '--comment',
+        '--content', '--append', '--priority', '--image', '--base64', '--comment', '--project',
         '--minutes', '-m', '--seconds', '-s', '--title', '--path', '--url', '--save',
         '--event', '--ids', '-p', '-t',
         // 【2026-09-30】webhook 配置相关
-        '--schema-json', '--schema-file', '--json-file', '--record-ids-file']);
+        '--schema-json', '--schema-file', '--json-file', '--record-ids-file',
+        // 【2026-11-12】表格尺寸相关
+        '--index', '--width', '--cols', '--rows']);
     // 可重复的选项：--map fA=content --map fB=priority / --const fA=拯救小猫
-    const optionRepeats = new Set(['--image', '--map', '--const']);
-    const optionFlags = new Set(['--json', '--undone', '--top', '--all', '--enable', '--disable', '--force']);
+    //             --col 3=200（表格视图列宽）/ --row 2=60（行高）
+    const optionRepeats = new Set(['--image', '--map', '--const', '--col', '--row']);
+    const optionFlags = new Set(['--json', '--undone', '--top', '--all', '--enable', '--disable', '--force', '--reset']);
     const aliases = { '-p': 'priority', '-t': 'type', '-m': 'minutes', '-s': 'seconds' };
 
     for (let i = 0; i < argv.length; i++) {
@@ -556,7 +697,8 @@ async function main() {
     const positional = {
         add: ['content'], get: ['id'], update: ['id'], done: ['ids'], delete: ['ids'],
         comment: ['id', 'text'], timer: ['action'], notify: ['title', 'body'],
-        window: ['action'], clipboard: ['action'], webhook: ['action'], settings: ['key', 'value']
+        window: ['action'], clipboard: ['action'], webhook: ['action'], settings: ['key', 'value'],
+        table: ['action', 'id', 'value']
     };
     const names = positional[args.command] || [];
     names.forEach((name, i) => {

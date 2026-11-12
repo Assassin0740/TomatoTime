@@ -6790,6 +6790,87 @@
                             break;
                         }
 
+                        // ---------- 表格尺寸操控（CLI / API，2026-11-12） ----------
+                        // 用离屏文档解析任务内容 → 改表格 → 序列化写回 content，
+                        // 走的是和手动编辑完全相同的保存链路（见 applyTaskPatch 注释）。
+                        case 'table': {
+                            const found = findNoteAnywhere(p.id);
+                            if (!found) { reply(false, null, '任务不存在：' + p.id); break; }
+                            if (!window.TableResize) { reply(false, null, 'TableResize 模块未加载'); break; }
+                            const doc = document.implementation.createHTMLDocument('table-edit');
+                            const holder = doc.createElement('div');
+                            holder.className = 'note-content-editable';
+                            holder.innerHTML = found.note.content || '';
+                            const tables = Array.prototype.slice.call(holder.querySelectorAll('table'));
+                            if (!tables.length) { reply(false, null, '这条任务里没有表格'); break; }
+                            const action = String(p.action || 'info').toLowerCase();
+                            const result = { id: found.note.id, action: action, count: tables.length };
+
+                            if (action === 'info' || action === 'list' || action === 'get') {
+                                result.tables = tables.map(t => TableResize.describeTable(t));
+                                reply(true, result);
+                                break;
+                            }
+
+                            // 支持一次改多张表：{tables:[{index,width,cols,rows,auto}]}
+                            const jobs = Array.isArray(p.tables) && p.tables.length
+                                ? p.tables
+                                : [{ index: p.index, width: p.width, cols: p.cols, rows: p.rows, auto: p.auto }];
+                            const applied = [];
+                            for (let i = 0; i < jobs.length; i++) {
+                                const job = Object.assign({}, jobs[i] || {});
+                                // action:'auto' 和 {auto:true} 两种写法都认
+                                if (action === 'auto') job.auto = true;
+                                if (action === 'reset' || action === 'unfreeze') job.auto = true;
+                                const idx = job.index === undefined || job.index === null ? 0 : Number(job.index);
+                                const table = tables[idx];
+                                if (!table) {
+                                    reply(false, null, '没有第 ' + idx + ' 张表（这条任务共 ' + tables.length + ' 张）');
+                                    return;
+                                }
+                                applied.push(TableResize.applyTableOps(table, job));
+                            }
+                            found.note.content = holder.innerHTML;
+                            if (found.archived) saveArchive(); else save();
+                            render();
+                            result.tables = tables.map(t => TableResize.describeTable(t));
+                            result.applied = applied;
+                            reply(true, result);
+                            break;
+                        }
+
+                        // 任务表格视图（table.task-table）的列宽 / 行高在 localStorage 里，只能在这边改
+                        case 'table-view': {
+                            if (!window.TableResize) { reply(false, null, 'TableResize 模块未加载'); break; }
+                            const action = String(p.action || 'info').toLowerCase();
+                            if (action === 'info' || action === 'list' || action === 'get') {
+                                reply(true, { action: 'info', layout: TableResize.loadTaskLayout() });
+                                break;
+                            }
+                            if (action === 'reset') {
+                                TableResize.saveTaskLayout({ colWidths: {}, rowHeights: {} });
+                                renderTable(true);
+                                reply(true, { action: 'reset', layout: TableResize.loadTaskLayout() });
+                                break;
+                            }
+                            // set：把 colWidths（列号 → 像素）/ rowHeights（noteId → 像素）并进现有布局
+                            const layout = TableResize.loadTaskLayout();
+                            const merge = (target, src) => {
+                                if (!src || typeof src !== 'object') return;
+                                Object.keys(src).forEach(k => {
+                                    const v = Number(src[k]);
+                                    if (!isFinite(v) || v <= 0) delete target[k];
+                                    else target[k] = Math.round(v);
+                                });
+                            };
+                            merge(layout.colWidths, p.colWidths);
+                            merge(layout.rowHeights, p.rowHeights);
+                            TableResize.saveTaskLayout(layout);
+                            renderTable(true);
+                            reply(true, { action: 'set', layout: TableResize.loadTaskLayout() });
+                            break;
+                        }
+
                         default:
                             reply(false, null, '未知操作：' + op);
                     }

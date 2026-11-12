@@ -226,6 +226,10 @@ function createApiServer(hooks) {
         }
         if (spec.top === false) task.top = false;
         if (Array.isArray(spec.tags)) task.tags = spec.tags.map(String);
+        if (spec.project !== undefined && spec.project !== null) {
+            const project = String(spec.project).trim();
+            if (project) task.project = project;
+        }
         return task;
     }
 
@@ -269,6 +273,7 @@ function createApiServer(hooks) {
             patch.p = parsePriority(body.priority !== undefined ? body.priority : body.p);
         }
         if (body.type !== undefined) patch.type = parseType(body.type);
+        if (body.project !== undefined) patch.project = String(body.project || '').trim();
         if (body.done !== undefined) patch.done = !!body.done;
         if (body.remindAt !== undefined || body.remind_at !== undefined) {
             const r = parseRemindAt(body.remindAt !== undefined ? body.remindAt : body.remind_at);
@@ -304,9 +309,13 @@ function createApiServer(hooks) {
                 { method: 'GET', path: '/api/tasks?scope=active|archive|all&keyword=&limit=', desc: '列出任务' },
                 { method: 'POST', path: '/api/tasks', desc: '新增任务；body 也支持 {tasks:[...]} 批量' },
                 { method: 'GET', path: '/api/tasks/:id', desc: '查询单条任务' },
-                { method: 'PATCH', path: '/api/tasks/:id', desc: '修改任务（内容/优先级/类型/完成/提醒）' },
+                { method: 'PATCH', path: '/api/tasks/:id', desc: '修改任务（内容/优先级/类型/项目/完成/提醒）' },
                 { method: 'DELETE', path: '/api/tasks/:id', desc: '删除任务' },
                 { method: 'POST', path: '/api/tasks/:id/comments', desc: '给任务追加评论 {text}' },
+                { method: 'GET', path: '/api/tasks/:id/table', desc: '读取任务内容里每张表格的尺寸（行数/列数/列宽/行高/是否冻结）' },
+                { method: 'POST', path: '/api/tasks/:id/table', desc: '改表格尺寸 {action:"set"|"auto", index, width:"900"|"80%", cols:"120,240,*", rows:[{row,height}]}' },
+                { method: 'GET', path: '/api/table-view', desc: '读取任务表格视图的列宽 / 行高（localStorage）' },
+                { method: 'POST', path: '/api/table-view', desc: '改表格视图 {colWidths:{"0":200}, rowHeights:{"<noteId>":80}}；{action:"reset"} 恢复默认' },
                 { method: 'GET', path: '/api/timer', desc: '计时器状态' },
                 { method: 'POST', path: '/api/timer', desc: '{action:start|pause|toggle|reset|mode|set, minutes, seconds}' },
                 { method: 'GET', path: '/api/clipboard/image', desc: '读取系统剪贴板里的图片（微信复制的截图也能读）' },
@@ -318,12 +327,26 @@ function createApiServer(hooks) {
                 { method: 'GET', path: '/api/webhook', desc: '查看 WebHook 完整配置（字段+选项+映射+固定文本）与最近推送记录' },
                 { method: 'POST', path: '/api/webhook', desc: '推送 {action:"created", ids|tasks, force}；改配置 {action:"config", config}；只解析 {action:"parse", schemaJson}；发测试 {action:"test"}' }
             ],
+            contentFormat: {
+                note: 'content 与 comments 支持轻量 markdown，也接受常见 HTML 标签，渲染后是排版而不是字面量',
+                markdown: {
+                    heading: '# ~ ####（如 "## 进度更新"）',
+                    list: '- 甲\\n- 乙（无序）｜1. 第一步\\n2. 第二步（有序）',
+                    emphasis: '**粗体** *斜体* ~~删除线~~ `代码`',
+                    link: '[文字](https://example.com)（只认 http/https）',
+                    quote: '> 引用',
+                    hr: '---'
+                },
+                html: 'h1~h6 / ul / ol / li / blockquote / a[href] / pre / hr / br 会被转成同样的样式；<br> 会变成换行',
+                tips: '写 \\n 或真正的换行都行；纯文本不受影响，不会被误渲染'
+            },
             taskExample: {
-                content: '完成季度总结（支持多行\\n第二行）',
+                content: '## 季度总结\n- 完成 A 模块\n- 待办 B 模块\n\n**重点**：本周五前必须收尾',
                 priority: 'high',
                 type: 'short',
+                project: '官网改版',
                 remindAt: '2026-09-28 18:00',
-                comments: ['由 AI 生成'],
+                comments: ['由 AI 生成，支持 **粗体** 和 [链接](https://example.com)'],
                 images: [{ url: 'https://example.com/a.png' }, { data: 'data:image/png;base64,iVBOR...' }]
             }
         }),
@@ -409,6 +432,20 @@ function createApiServer(hooks) {
             return { ok: true, webhook: info };
         },
 
+        // 【2026-11-12】任务表格视图（table.task-table）的列宽 / 行高存在渲染进程的 localStorage
+        'GET /api/table-view': async () => {
+            const r = await withTimeout(
+                hooks.invokeRenderer('table-view', { action: 'info' }), REQUEST_TIMEOUT_MS, '读取表格视图布局');
+            return Object.assign({ ok: true }, r || {});
+        },
+
+        'POST /api/table-view': async (req, url, body) => {
+            const payload = Object.assign({}, body || {});
+            const r = await withTimeout(
+                hooks.invokeRenderer('table-view', payload), REQUEST_TIMEOUT_MS, '调整表格视图列宽');
+            return Object.assign({ ok: true }, r || {});
+        },
+
         /**
          * 【2026-09-30 增加】WebHook 一个端点干四件事，靠 action 区分：
          *   push   （默认）推送任务：{action:'created', ids:[...] | tasks:[...], force?}
@@ -475,7 +512,7 @@ function createApiServer(hooks) {
         }
 
         // /api/tasks/:id 及其子路径
-        const taskMatch = pathname.match(/^\/api\/tasks\/(\d+)(?:\/(comments))?$/);
+        const taskMatch = pathname.match(/^\/api\/tasks\/(\d+)(?:\/(comments|table))?$/);
         if (taskMatch) {
             const id = parseInt(taskMatch[1], 10);
             const sub = taskMatch[2];
@@ -494,6 +531,20 @@ function createApiServer(hooks) {
                 const note = await withTimeout(
                     hooks.invokeRenderer('comment', { id, text }), REQUEST_TIMEOUT_MS, '添加评论');
                 return sendJson(res, { ok: true, task: note });
+            }
+            /*
+             * 【2026-11-12】表格尺寸：GET 读 / POST 改。
+             * body = { action:'set'|'auto', index:0, width:'900'|'80%',
+             *          cols:'120,240,*', rows:[{row:2,height:60}], tables:[…] }
+             * 真正干活的是渲染进程（那边有 DOM，且改动直接落进 note.content 的保存链路）。
+             */
+            if (sub === 'table') {
+                // 路径里的 id 是准的，body 里再带 id 也不许覆盖
+                const payload = Object.assign({}, body && typeof body === 'object' ? body : {}, { id: id });
+                if (method === 'GET') payload.action = payload.action || 'info';
+                const r = await withTimeout(
+                    hooks.invokeRenderer('table', payload), REQUEST_TIMEOUT_MS, '调整表格尺寸');
+                return sendJson(res, Object.assign({ ok: true }, r || {}));
             }
         }
 

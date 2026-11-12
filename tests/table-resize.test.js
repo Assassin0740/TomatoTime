@@ -77,9 +77,9 @@ test('web/table-resize.js 与主版本完全一致', () => {
     assert.strictEqual(read('table-resize.js'), read('web/table-resize.js'));
 });
 
-test('sw.js：版本升到 v2.2.7 且预缓存清单含 table-resize.js', () => {
+test('sw.js：版本升到 v2.3.3 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.2';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.3';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -158,6 +158,87 @@ test('界面宽度被夹在窗口内（min(设置值, 100%)）', () => {
         assert.ok(src.includes("addEventListener('resize', () => applyContainerWidth"),
             f + ' 窗口缩放没有重算宽度');
     });
+});
+
+/**
+ * 【2026-11-12】命令行 / API 操控表格尺寸（CR-037）的纯函数。
+ * 拖拽只能人手动调，AI 与脚本要能说「把这张表压到 900px」「第三列 240」。
+ */
+test('parseSize：px / 百分比 / 非法', () => {
+    assert.deepStrictEqual(TableResize.parseSize('900'), { kind: 'px', value: 900 });
+    assert.deepStrictEqual(TableResize.parseSize('900px'), { kind: 'px', value: 900 });
+    assert.deepStrictEqual(TableResize.parseSize('80%'), { kind: 'pct', value: 80 });
+    assert.deepStrictEqual(TableResize.parseSize('150%'), { kind: 'pct', value: 100 }); // 压到 100%
+    assert.strictEqual(TableResize.parseSize('abc'), null);
+    assert.strictEqual(TableResize.parseSize(''), null);
+    assert.strictEqual(TableResize.parseSize(undefined), null);
+});
+
+test('parseColSpec：* 表示自动，低于下限整条作废', () => {
+    assert.deepStrictEqual(TableResize.parseColSpec('120,240,*'), [120, 240, null]);
+    assert.deepStrictEqual(TableResize.parseColSpec(['120', 'auto', '240px']), [120, null, 240]);
+    assert.strictEqual(TableResize.parseColSpec('10,20'), null);  // 都低于 MIN_COL
+    assert.strictEqual(TableResize.parseColSpec(null), null);
+});
+
+test('planColWidths：差额摊给自动列，总和精确等于目标宽度', () => {
+    const p = TableResize.planColWidths([120, null, 240], [100, null, null], 900);
+    assert.deepStrictEqual(p.widths, [120, 540, 240]);
+    assert.strictEqual(p.total, 900);
+});
+
+test('planColWidths：全部列都指定时以指定值为准', () => {
+    const p = TableResize.planColWidths([80, 80], [null, null], 900);
+    assert.deepStrictEqual(p.widths, [80, 80]);
+    assert.strictEqual(p.total, 160);
+});
+
+test('planColWidths：目标比下限还小时不越界', () => {
+    const p = TableResize.planColWidths([120, null], [null, null], 60);
+    assert.strictEqual(p.widths[1], TableResize.MIN_COL);
+    assert.strictEqual(p.total, 120 + TableResize.MIN_COL);
+});
+
+test('parsePx：读内联宽度', () => {
+    assert.strictEqual(TableResize.parsePx('240px'), 240);
+    assert.strictEqual(TableResize.parsePx('240'), 240);
+    assert.strictEqual(TableResize.parsePx(''), null);
+});
+
+test('describeTable / applyTableOps / freezeWithWidths 已导出（离屏文档要用）', () => {
+    ['describeTable', 'applyTableOps', 'freezeWithWidths', 'parseSize', 'parseColSpec',
+        'planColWidths', 'loadTaskLayout', 'saveTaskLayout'].forEach(fn => {
+            assert.strictEqual(typeof TableResize[fn], 'function', '缺少导出：' + fn);
+        });
+});
+
+// ---------- 同步钉子 ----------
+
+test('renderer 暴露 table / table-view 两个 API 操作（双副本一致）', () => {
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(/case 'table': \{/.test(src), f + ' 缺少 table 操作');
+        assert.ok(/case 'table-view': \{/.test(src), f + ' 缺少 table-view 操作');
+        assert.ok(src.includes('TableResize.applyTableOps'), f + ' 没有调用 applyTableOps');
+        assert.ok(src.includes('createHTMLDocument'), f + ' 没有用离屏文档解析内容');
+    });
+});
+
+test('api-server 暴露 /api/tasks/:id/table 与 /api/table-view', () => {
+    const src = read('api-server.js');
+    assert.ok(src.includes('(comments|table)'), '任务子路径没有 table');
+    assert.ok(src.includes("'GET /api/table-view'") && src.includes("'POST /api/table-view'"),
+        '缺少 table-view 路由');
+    assert.ok(src.includes('调整表格尺寸'), '缺少表格尺寸的处理分支');
+});
+
+test('CLI 有 table 子命令与帮助文本', () => {
+    const src = read('timer-cli.js');
+    assert.ok(/async table\(args\) \{/.test(src), '缺少 table 命令');
+    assert.ok(src.includes("'/api/tasks/' + id + '/table'"), 'CLI 没有调用表格接口');
+    assert.ok(src.includes("table <info|set|auto|view>"), '帮助文本缺少 table');
+    assert.ok(src.includes('function rowSpecs'), '缺少行高参数解析');
+    assert.ok(/table: \['action', 'id', 'value'\]/.test(src), '缺少 table 的位置参数映射');
 });
 
 test('两版 CSS 都有拖拽期防选中规则', () => {

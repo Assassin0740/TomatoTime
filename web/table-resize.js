@@ -19,6 +19,14 @@
  *     renderTable 每次渲染后调 applyTaskTableLayout() 回放；
  *   · 笔记内容里的表格：直接写内联 style，serializeEditable 存 innerHTML 时自然带上，
  *     无需额外存储。
+ *
+ * 【2026-11-12 新增】命令行 / API 操控
+ *   拖拽只解决「人手动调」。AI 与脚本要能说「把这张表压到 900px」「第三列 240」，
+ *   于是把尺寸的读 / 写抽成 describeTable / applyTableOps 等函数，
+ *   renderer 的 api:task-request 暴露成 op 'table' / 'table-view'，
+ *   CLI 侧对应 `timer-cli.js table info|set|auto|view`。
+ *   这些函数要能在离屏文档（createHTMLDocument）里跑 —— 那里没有布局，
+ *   所以写入列宽时必须显式给值（freezeWithWidths），不能靠测量。
  */
 
 (function (root, factory) {
@@ -32,6 +40,7 @@
     const EDGE = 7;        // 距边框多少像素内判定命中
     const MIN_COL = 40;    // 列宽下限
     const MIN_ROW = 24;    // 行高下限
+    const DEFAULT_COL = 120; // 自动列在没有历史宽度时的兜底宽度
     const STORAGE_KEY = 'taskTableLayout.v1';
 
     // ---------- 纯函数（可单测） ----------
@@ -332,6 +341,244 @@
         return layout;
     }
 
+    // ---------- 命令行 / API 操控表格尺寸（2026-11-12） ----------
+    //
+    // 【为什么要有这一段】
+    //   拖拽只解决「人手动调」，AI 和脚本没法可靠地模拟鼠标：说「把这张表压到 900px」
+    //   或者「第三列加宽到 240」，之前只能靠人。这里把「读尺寸 / 写尺寸」抽成模块函数，
+    //   renderer 的 api:task-request 直接调用，CLI（timer-cli.js table …）再走 HTTP 进来。
+    //
+    // 【关键约束】
+    //   这些函数要在「离屏文档」里跑（document.implementation.createHTMLDocument），
+    //   那里没有布局，getBoundingClientRect / getComputedStyle 全是 0 ——
+    //   所以写入时必须由调用方给出显式列宽（freezeWithWidths），不能依赖测量。
+
+    /** '900' / '900px' / '80%' → {kind:'px'|'pct', value}；非法返回 null */
+    function parseSize(input) {
+        if (input === undefined || input === null || input === '') return null;
+        const s = String(input).trim().toLowerCase();
+        if (/^\d+(?:\.\d+)?%$/.test(s)) {
+            const v = parseFloat(s);
+            if (!isFinite(v) || v <= 0) return null;
+            return { kind: 'pct', value: Math.min(100, Math.round(v * 10) / 10) };
+        }
+        if (/^\d+(?:\.\d+)?(?:px)?$/.test(s)) {
+            const v = Math.round(parseFloat(s));
+            if (!isFinite(v) || v < 1) return null;
+            return { kind: 'px', value: v };
+        }
+        return null;
+    }
+
+    /** '120,240,*' → [120, 240, null]（null = 该列自动）；格式错返回 null */
+    function parseColSpec(input) {
+        if (input === undefined || input === null) return null;
+        const raw = Array.isArray(input) ? input : String(input).split(',');
+        const out = [];
+        for (let i = 0; i < raw.length; i++) {
+            const s = String(raw[i] === null || raw[i] === undefined ? '' : raw[i]).trim().toLowerCase();
+            if (s === '' || s === '*' || s === 'auto' || s === '-' || s === 'null') { out.push(null); continue; }
+            const n = Math.round(Number(s.replace(/px$/, '')));
+            if (!isFinite(n) || n < MIN_COL) return null;
+            out.push(n);
+        }
+        return out.length ? out : null;
+    }
+
+    /**
+     * 算出最终列宽（纯函数）。
+     *   spec    [120, null, 240]  null = 自动
+     *   current [100, 100, 100]   当前各列宽（可含 null）
+     *   total   目标总宽（px，可空）
+     * 规则：指定列用指定值；自动列先沿用当前值（没有就用 DEFAULT_COL），
+     *       若给了 total 就把差额逐列 ±1 摊到自动列上，保证总和精确等于 total。
+     *       全部列都指定时忽略 total（以用户给的具体宽度为准）。
+     */
+    function planColWidths(spec, current, total) {
+        const n = spec ? spec.length : 0;
+        const widths = new Array(n);
+        const auto = [];
+        for (let i = 0; i < n; i++) {
+            const v = spec[i];
+            if (v === null || v === undefined) { auto.push(i); widths[i] = 0; }
+            else widths[i] = Math.max(MIN_COL, Math.round(v));
+        }
+        for (let k = 0; k < auto.length; k++) {
+            const i = auto[k];
+            const cur = current && isFinite(current[i]) && current[i] > 0 ? Math.round(current[i]) : 0;
+            widths[i] = Math.max(MIN_COL, cur || DEFAULT_COL);
+        }
+        let sum = 0;
+        for (let i = 0; i < n; i++) sum += widths[i];
+
+        if (auto.length && isFinite(total) && total > 0) {
+            let delta = Math.round(total) - sum;
+            let guard = 0;
+            while (delta !== 0 && guard++ < 20000) {
+                let moved = false;
+                for (let k = 0; k < auto.length && delta !== 0; k++) {
+                    const i = auto[k];
+                    if (delta > 0) { widths[i] += 1; delta -= 1; moved = true; }
+                    else if (widths[i] > MIN_COL) { widths[i] -= 1; delta -= 1; moved = true; }
+                }
+                if (!moved) break; // 自动列全部压到下限还不够窄，只能到此为止
+            }
+            sum = 0;
+            for (let i = 0; i < n; i++) sum += widths[i];
+        }
+        return { widths: widths, total: sum };
+    }
+
+    /** 把 '240px' / '240' 解析成数字，空 / 非数字 → null */
+    function parsePx(value) {
+        if (value === undefined || value === null || value === '') return null;
+        const n = Math.round(parseFloat(value));
+        return isFinite(n) ? n : null;
+    }
+
+    /**
+     * 读出一张表的尺寸信息（离屏文档里也能用 —— 只读内联样式，不看布局）。
+     * colWidths 只取首行（表头/首行就是列定义），合并单元格的列取各 cell 宽度之和。
+     */
+    function describeTable(table) {
+        if (!table || !table.rows) return null;
+        const rows = table.rows.length;
+        let cols = 0;
+        let hasSpan = false;
+        const rowHeights = [];
+        const first = table.rows[0];
+        const colWidths = [];
+        for (let r = 0; r < rows; r++) {
+            const tr = table.rows[r];
+            let logical = 0;
+            for (let i = 0; i < tr.children.length; i++) {
+                const cell = tr.children[i];
+                const cs = Math.max(1, cell.colSpan || 1);
+                const rs = Math.max(1, cell.rowSpan || 1);
+                if (cs > 1 || rs > 1) hasSpan = true;
+                if (tr === first) {
+                    // 首行的单元格：占几列就把宽度平均摊到这几列上
+                    const w = parsePx(cell.style.width);
+                    for (let k = 0; k < cs; k++) {
+                        colWidths.push(w === null ? null : Math.round(w / cs));
+                    }
+                }
+                logical += cs;
+            }
+            if (logical > cols) cols = logical;
+            rowHeights.push(parsePx(tr.style.height));
+        }
+        return {
+            rows: rows,
+            cols: cols,
+            hasSpan: hasSpan,
+            frozen: !!table.getAttribute('data-rsz-frozen'),
+            width: table.style.width || '',
+            tableLayout: table.style.tableLayout || '',
+            hasHead: !!(table.tHead || table.querySelector('th')),
+            colWidths: colWidths,
+            rowHeights: rowHeights
+        };
+    }
+
+    /**
+     * 用显式列宽把表格冻结成固定布局 —— 离屏文档专用版本（不测量，纯写入）。
+     * 与 freezeTableLayout 的差别：那个靠 getBoundingClientRect 量现状，这里由调用方给值。
+     */
+    function freezeWithWidths(table, widths) {
+        if (!table || !table.rows || !table.rows.length || !widths || !widths.length) return 0;
+        for (let r = 0; r < table.rows.length; r++) {
+            const cells = table.rows[r].children;
+            let c = 0;
+            for (let i = 0; i < cells.length; i++) {
+                const span = Math.max(1, cells[i].colSpan || 1);
+                let w = 0;
+                for (let k = 0; k < span; k++) w += widths[c + k] || DEFAULT_COL;
+                cells[i].style.width = Math.round(w) + 'px';
+                cells[i].style.boxSizing = 'border-box';
+                c += span;
+            }
+        }
+        const total = widths.reduce(function (a, b) { return a + b; }, 0);
+        table.style.tableLayout = 'fixed';
+        table.style.width = total + 'px';
+        // .pasted-table 的 min-width:100% 会让「设窄」失效，必须压掉
+        table.style.minWidth = '0';
+        table.setAttribute('data-rsz-frozen', '1');
+        return total;
+    }
+
+    /** 百分比宽度：保持当前列宽比例缩放（没有显式列宽时交给 auto 布局按内容分配） */
+    function setTableWidthPercent(table, pct) {
+        if (!table) return;
+        table.style.width = pct + '%';
+        table.style.minWidth = '0';
+    }
+
+    /**
+     * 一次性套用一组尺寸改动，返回改动后的 describeTable。
+     * ops = { width:'900'|'80%', cols:'120,240,*', rows:[{row:2,height:60}], auto:true }
+     *   行号从 1 开始（和表格里看到的一致）
+     *   给了 cols 就一定会冻结成固定布局（否则 auto 布局会把宽度当「偏好」重排）
+     */
+    function applyTableOps(table, ops) {
+        if (!table) throw new Error('表格不存在');
+        const o = ops || {};
+        const before = describeTable(table);
+
+        if (o.auto) {
+            unfreezeTableLayout(table);
+            table.removeAttribute('data-rsz-size'); // 清理曾由命令行设置过的宽度标记
+            return describeTable(table);
+        }
+
+        const size = parseSize(o.width);
+        if (o.width !== undefined && o.width !== null && o.width !== '' && !size) {
+            throw new Error('宽度格式不正确：' + o.width + '（可用 900 / 900px / 80%）');
+        }
+
+        if (o.cols !== undefined && o.cols !== null && o.cols !== '') {
+            const spec = parseColSpec(o.cols);
+            if (!spec) throw new Error('列宽格式不正确：' + o.cols + '（用逗号分隔，* 表示自动）');
+            if (spec.length !== before.cols) {
+                throw new Error('列数不匹配：表格有 ' + before.cols + ' 列，给了 ' + spec.length + ' 个宽度');
+            }
+            if (before.hasSpan) throw new Error('表格含合并单元格（colspan/rowspan），请先用 --width 调整整体宽度');
+            const plan = planColWidths(spec, before.colWidths, size && size.kind === 'px' ? size.value : null);
+            freezeWithWidths(table, plan.widths);
+        } else if (size) {
+            if (size.kind === 'pct') {
+                setTableWidthPercent(table, size.value);
+            } else if (before.frozen && before.colWidths.length) {
+                // 已冻结：按比例缩放列宽，保持外观不变
+                const plan = planColWidths(before.colWidths, before.colWidths, size.value);
+                freezeWithWidths(table, plan.widths);
+            } else {
+                // 未冻结：只给表宽，列宽交给 auto 布局按内容比例分配
+                table.style.width = size.value + 'px';
+                table.style.minWidth = '0';
+            }
+        }
+
+        if (o.rows) {
+            const list = Array.isArray(o.rows) ? o.rows : [];
+            for (let i = 0; i < list.length; i++) {
+                const item = list[i] || {};
+                const idx = Math.round(Number(item.row));
+                const h = Math.round(Number(item.height));
+                if (!isFinite(idx) || idx < 1 || idx > table.rows.length) {
+                    throw new Error('行号超出范围：' + item.row + '（共 ' + table.rows.length + ' 行，从 1 开始）');
+                }
+                if (!isFinite(h) || h < MIN_ROW) {
+                    throw new Error('行高不正确：' + item.height + '（最小 ' + MIN_ROW + 'px）');
+                }
+                setRowHeight(table.rows[idx - 1], h);
+            }
+        }
+
+        return describeTable(table);
+    }
+
     // ---------- 事件委托 ----------
 
     function init() {
@@ -512,7 +759,19 @@
         fitTableToWidth: fitTableToWidth,
         fitAllFrozenTables: fitAllFrozenTables,
         applyTaskTableLayout: applyTaskTableLayout,
+        // 命令行 / API 操控（2026-11-12）
+        parseSize: parseSize,
+        parseColSpec: parseColSpec,
+        parsePx: parsePx,
+        planColWidths: planColWidths,
+        describeTable: describeTable,
+        freezeWithWidths: freezeWithWidths,
+        setTableWidthPercent: setTableWidthPercent,
+        applyTableOps: applyTableOps,
+        loadTaskLayout: loadLayout,
+        saveTaskLayout: saveLayout,
         MIN_COL: MIN_COL,
-        MIN_ROW: MIN_ROW
+        MIN_ROW: MIN_ROW,
+        DEFAULT_COL: DEFAULT_COL
     };
 });

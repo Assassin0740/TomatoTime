@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>表格尺寸命令行探针</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<!-- 和真实笔记一样的容器结构：pasted-table-wrap + pasted-table -->
+<div class="note-content-editable" id="host" style="width:1000px">
+    <p>表前文字 <strong>粗体</strong></p>
+    <div class="pasted-table-wrap">
+        <table class="pasted-table" id="t">
+            <tbody>
+                <tr><th>A</th><th>B</th><th>C</th><th>D</th></tr>
+                <tr><td>1</td><td><img class="pasted-cell-img" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></td><td>3</td><td>4</td></tr>
+                <tr><td>5</td><td>6</td><td>7</td><td>8</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p>表后文字</p>
+</div>
+<script src="../../table-resize.js"></script>
+<script>
+window.__probe = (function () {
+    const T = window.TableResize;
+    const out = { checks: {}, diag: {} };
+    const C = out.checks;
+    const host = document.getElementById('host');
+    const original = host.innerHTML;
+
+    // 1) 离屏解析 + 序列化保真：内容不能被改坏
+    const doc = document.implementation.createHTMLDocument('t');
+    const holder = doc.createElement('div');
+    holder.innerHTML = original;
+    const tables = Array.prototype.slice.call(holder.querySelectorAll('table'));
+    C.parseCount = tables.length === 1;
+    const roundTrip = holder.innerHTML;
+    C.roundTripKeepsText = roundTrip.indexOf('表前文字') !== -1 && roundTrip.indexOf('表后文字') !== -1;
+    C.roundTripKeepsImg = roundTrip.indexOf('data:image/gif;base64') !== -1;
+    C.roundTripKeepsClass = roundTrip.indexOf('pasted-table') !== -1;
+
+    // 2) describeTable
+    const d0 = T.describeTable(tables[0]);
+    out.diag.describe0 = d0;
+    C.describeRowsCols = d0.rows === 3 && d0.cols === 4;
+    C.describeNotFrozen = d0.frozen === false && !d0.width;
+    C.describeNoSpan = d0.hasSpan === false;
+
+    // 3) 指定宽度 + 列宽 → 冻结成固定布局
+    const d1 = T.applyTableOps(tables[0], { width: '900', cols: '120,*,240,*' });
+    out.diag.describe1 = d1;
+    C.frozenAfterCols = d1.frozen === true && d1.tableLayout === 'fixed';
+    C.widthAfterCols = d1.width === '900px';
+    C.colSumIs900 = d1.colWidths.reduce((a, b) => a + b, 0) === 900;
+    C.fixedColHonored = d1.colWidths[0] === 120 && d1.colWidths[2] === 240;
+
+    // 4) 行高：第 2 行 60px + overflow:hidden + 图片跟着行高
+    const d2 = T.applyTableOps(tables[0], { rows: [{ row: 2, height: 60 }] });
+    out.diag.describe2 = d2;
+    const tr2 = tables[0].rows[1];
+    C.rowHeightWritten = d2.rowHeights[1] === 60;
+    C.rowOverflowHidden = tr2.children[0].style.overflow === 'hidden';
+    C.rowImgFollows = /max-height:\s*60px|max-height:\s*48px/.test(tr2.querySelector('img').getAttribute('style') || '');
+
+    // 5) 写回内容 → 重新解析：尺寸还在（持久化）
+    const saved = holder.innerHTML;
+    holder.innerHTML = saved;
+    const d3 = T.describeTable(holder.querySelectorAll('table')[0]);
+    out.diag.describe3 = d3;
+    C.persistedFrozen = d3.frozen === true && d3.width === '900px';
+    C.persistedRowHeight = d3.rowHeights[1] === 60;
+
+    // 6) 百分比宽度
+    const d4 = T.applyTableOps(tables[0], { width: '80%' });
+    out.diag.describe4 = d4;
+    C.percentWidth = d4.width === '80%';
+    C.percentMinWidthZero = parseFloat(tables[0].style.minWidth) === 0 && tables[0].style.minWidth !== '';
+
+    // 7) auto 解冻
+    const d5 = T.applyTableOps(tables[0], { auto: true });
+    out.diag.describe5 = d5;
+    C.autoUnfrozen = d5.frozen === false && !d5.width && !d5.tableLayout;
+
+    // 8) 真实渲染：设 900px 宽的表在 1000px 容器里就是 900px，且不溢出
+    T.applyTableOps(document.getElementById('t'), { width: '900' });
+    const tbl = document.getElementById('t');
+    const rect = tbl.getBoundingClientRect();
+    out.diag.renderedWidth = Math.round(rect.width);
+    out.diag.hostWidth = Math.round(host.getBoundingClientRect().width);
+    C.renderedWidthHonored = Math.round(rect.width) === 900;
+    C.noOverflow = rect.right <= host.getBoundingClientRect().right + 1;
+
+    // 9) 列宽在真实渲染里生效（fixed 布局下 120 / 240 不会被打回）
+    T.applyTableOps(tbl, { cols: '120,120,240,120' });
+    const cells = tbl.rows[1].children;
+    out.diag.renderedCols = [0, 1, 2, 3].map(i => Math.round(cells[i].getBoundingClientRect().width));
+    C.colRendered = Math.round(cells[2].getBoundingClientRect().width) === 240;
+
+    // 10) 错误提示要能说人话
+    let errCols = '';
+    try { T.applyTableOps(tbl, { cols: '100,100' }); } catch (e) { errCols = e.message; }
+    C.errorOnColMismatch = errCols.indexOf('列数不匹配') !== -1;
+    let errRow = '';
+    try { T.applyTableOps(tbl, { rows: [{ row: 99, height: 60 }] }); } catch (e) { errRow = e.message; }
+    C.errorOnBadRow = errRow.indexOf('行号超出范围') !== -1;
+
+    out.pass = Object.keys(C).every(k => C[k] === true);
+    out.failed = Object.keys(C).filter(k => C[k] !== true);
+    return out;
+})();
+</script>
+</body>
+</html>

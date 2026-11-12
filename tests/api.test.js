@@ -98,6 +98,22 @@ function withServer(fn) {
                     n.comments.push({ text: payload.text, time: Date.now() });
                     return n;
                 }
+                // 【2026-11-12】表格尺寸：真实执行在渲染进程，这里只验证路由与参数透传
+                if (op === 'table') {
+                    return {
+                        id: payload.id,
+                        action: payload.action || 'info',
+                        count: 1,
+                        tables: [{ rows: 3, cols: 4, frozen: false }],
+                        echo: payload
+                    };
+                }
+                if (op === 'table-view') {
+                    return {
+                        action: payload.action || 'info',
+                        layout: { colWidths: payload.colWidths || {}, rowHeights: payload.rowHeights || {} }
+                    };
+                }
                 throw new Error('未知操作 ' + op);
             },
             timer: {
@@ -191,6 +207,51 @@ test('查询、修改、评论、删除一条龙', withServer(async () => {
 
     const gone = await request('GET', '/api/tasks/' + id, undefined, auth);
     assert.strictEqual(gone.json.ok, false);
+}));
+
+/**
+ * 【2026-11-12】表格尺寸接口（CR-037）
+ * CLI 的 `table info/set/auto` 和 `table view` 最终都打到这两个入口。
+ */
+test('内容表格：GET 读尺寸 / POST 改尺寸，参数原样透传到渲染进程', withServer(async () => {
+    const added = await request('POST', '/api/tasks', {
+        content: '<div class="pasted-table-wrap"><table class="pasted-table"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table></div>'
+    }, auth);
+    const id = added.json.created[0].id;
+
+    const info = await request('GET', '/api/tasks/' + id + '/table', undefined, auth);
+    assert.strictEqual(info.json.ok, true);
+    assert.strictEqual(info.json.action, 'info');   // GET 默认就是读
+    assert.strictEqual(info.json.count, 1);
+    assert.strictEqual(info.json.echo.id, id);
+
+    const set = await request('POST', '/api/tasks/' + id + '/table', {
+        action: 'set', index: 1, width: '900', cols: '120,240,*', rows: [{ row: 2, height: 60 }]
+    }, auth);
+    assert.strictEqual(set.json.ok, true);
+    assert.strictEqual(set.json.echo.id, id);        // 路径里的 id 优先，body 里的 id 不许覆盖
+    assert.strictEqual(set.json.echo.index, 1);
+    assert.strictEqual(set.json.echo.width, '900');
+    assert.strictEqual(set.json.echo.cols, '120,240,*');
+    assert.deepStrictEqual(set.json.echo.rows, [{ row: 2, height: 60 }]);
+
+    const auto = await request('POST', '/api/tasks/' + id + '/table', { action: 'auto' }, auth);
+    assert.strictEqual(auto.json.echo.action, 'auto');
+}));
+
+test('表格视图：读布局 / 写列宽行高 / 重置', withServer(async () => {
+    const v = await request('GET', '/api/table-view', undefined, auth);
+    assert.strictEqual(v.json.ok, true);
+    assert.strictEqual(v.json.action, 'info');
+
+    const s = await request('POST', '/api/table-view', {
+        colWidths: { '0': 200 }, rowHeights: { '1792651868602': 80 }
+    }, auth);
+    assert.strictEqual(s.json.layout.colWidths['0'], 200);
+    assert.strictEqual(s.json.layout.rowHeights['1792651868602'], 80);
+
+    const r = await request('POST', '/api/table-view', { action: 'reset' }, auth);
+    assert.strictEqual(r.json.action, 'reset');
 }));
 
 test('关键词搜索与 scope 过滤', withServer(async () => {
