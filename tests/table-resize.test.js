@@ -79,7 +79,7 @@ test('web/table-resize.js 与主版本完全一致', () => {
 
 test('sw.js：版本升到 v2.2.7 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.0';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.1';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -126,6 +126,22 @@ test('冻结表格宽度会夹回容器（fitTableToWidth）', () => {
     // 窗口缩放 + 新内容渲染要贴合
     assert.ok(src.includes("addEventListener('resize', scheduleFit)"), '窗口缩放没有触发贴合');
     assert.ok(src.includes('new MutationObserver(scheduleFit)'), '新渲染的内容没有兜底贴合');
+});
+
+/**
+ * 【2026-11-12】历史表格一次性修复钉子：老数据里被冻结成绝对像素的表格，
+ * 启动时要解冻回自适应布局（否则用户升级后旧表还是超出右边界看不见）。
+ */
+test('两版 renderer 都有历史表格解冻迁移（只跑一次）', () => {
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(src.includes('migratePastedTableLayouts'), f + ' 缺少历史表格迁移');
+        assert.ok(src.includes("'pastedTableLayoutReset.v1'"), f + ' 缺少一次性标志位');
+        assert.ok(src.includes("querySelectorAll('table.pasted-table[data-rsz-frozen]')"),
+            f + ' 迁移没有挑选冻结表格');
+        assert.ok(src.includes('walk(notes)') && src.includes('walk(archivedNotes)'),
+            f + ' 迁移没有覆盖 notes / archivedNotes');
+    });
 });
 
 test('两版 CSS 都有拖拽期防选中规则', () => {

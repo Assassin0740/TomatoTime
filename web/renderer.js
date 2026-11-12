@@ -7397,6 +7397,61 @@
         };
 
         // ==================== 多端同步集成（focus-timer sync） ====================
+        /**
+         * 【2026-11-12】一次性修复历史粘贴表格（CR-035）。
+         * 之前拖过列宽的表格被「冻结」成绝对像素宽度：窗口一窄就顶出右边界看不见，
+         * 长文本列被挤成 44px 竖排。这里统一解冻，交还给自适应布局
+         * （新粘贴的表已带 colgroup 比例，解冻后按源比例铺开）。
+         * 只跑一次；之后新拖出来的宽度属于用户意图，不再覆盖。
+         */
+        (function migratePastedTableLayouts() {
+            const FLAG = 'pastedTableLayoutReset.v1';
+            try { if (localStorage.getItem(FLAG)) return; } catch (e) { return; }
+
+            const unfreezeHtml = (html) => {
+                if (typeof html !== 'string' || html.indexOf('pasted-table') === -1) return html;
+                const box = document.createElement('div');
+                box.innerHTML = html;
+                const tables = box.querySelectorAll('table.pasted-table[data-rsz-frozen]');
+                if (!tables.length) return html;
+                tables.forEach(t => {
+                    t.removeAttribute('data-rsz-frozen');
+                    t.style.tableLayout = '';
+                    t.style.width = '';
+                    t.style.minWidth = '';
+                    if (!t.getAttribute('style')) t.removeAttribute('style');
+                    t.querySelectorAll('th, td').forEach(c => {
+                        c.style.width = '';
+                        c.style.boxSizing = '';
+                        if (!c.getAttribute('style')) c.removeAttribute('style');
+                    });
+                });
+                return box.innerHTML;
+            };
+
+            let changed = 0;
+            const walk = (list) => (Array.isArray(list) ? list : []).forEach(n => {
+                if (!n) return;
+                const next = unfreezeHtml(n.content);
+                if (next !== n.content) { n.content = next; changed++; }
+                if (Array.isArray(n.comments)) {
+                    n.comments.forEach(c => {
+                        if (!c || typeof c.text !== 'string') return;
+                        const ct = unfreezeHtml(c.text);
+                        if (ct !== c.text) { c.text = ct; changed++; }
+                    });
+                }
+            });
+            walk(notes);
+            walk(archivedNotes);
+
+            try { localStorage.setItem('archived_notes', JSON.stringify(archivedNotes)); } catch (e) {}
+            if (changed) save();
+            else { try { localStorage.setItem('notes', JSON.stringify(notes)); } catch (e) {} }
+            try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+            if (changed) console.log('[table] 已解冻历史表格 ' + changed + ' 处');
+        })();
+
         // 通过 window.createSync(deps) 注入渲染端依赖，不改动任何原有任务逻辑：
         //  · 任务增删改都会经过 save() / saveArchive()，已在下方挂脏标记触发推送；
         //  · 拉取到的远端变更由 applyRemote 合并回 notes / archivedNotes 并重绘；
