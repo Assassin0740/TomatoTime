@@ -87,7 +87,7 @@ test('renderer：分层数据模型与三处恢复入口齐全', () => {
 test('web 副本同源、缓存版本已递增、测试清单已纳入', () => {
     assert.strictEqual(js, webJs, 'web/renderer.js 必须与 renderer.js 同源');
     assert.strictEqual(css, webCss, 'web/style.css 必须与 style.css 同源');
-    assert.ok(read('web/sw.js').includes("const CACHE_VERSION = 'v2.3.1';"),
+    assert.ok(read('web/sw.js').includes("const CACHE_VERSION = 'v2.3.2';"),
         '改了前端 JS/CSS 必须递增 CACHE_VERSION');
     assert.ok(read('package.json').includes('tests/annotation-layer.test.js'),
         'npm test 必须纳入本用例');

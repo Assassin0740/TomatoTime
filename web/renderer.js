@@ -5334,26 +5334,37 @@
         const containerWidthValue = document.getElementById('containerWidthValue');
         const mainContainer = document.querySelector('.container');
         
+        /**
+         * 【2026-11-12】界面宽度必须夹在窗口宽度以内（CR-036）。
+         * 用户把「整体界面宽度」调到 1700px，但窗口只有 ~1090px：
+         * 容器按 1700px 铺开 → 右侧 600px 跑出窗口且没有任何横向滚动，
+         * 整块内容（含表格）被切掉看不见。用 min(设置值, 100%) 保证永远放得下，
+         * 窗口放大后设置值能原样生效，不用重新拖滑块。
+         */
+        const applyContainerWidth = (w) => {
+            if (!mainContainer) return;
+            mainContainer.style.maxWidth = 'min(' + w + 'px, 100%)';
+            // 让用户知道为什么实际没有 1700 那么宽
+            const clamped = window.innerWidth && w > window.innerWidth;
+            containerWidthValue.textContent = clamped
+                ? w + 'px（超出窗口，按窗口宽显示）'
+                : w + 'px';
+        };
+
         containerWidthSlider.oninput = () => {
             const w = containerWidthSlider.value;
-            containerWidthValue.textContent = w + 'px';
-            if (mainContainer) {
-                mainContainer.style.maxWidth = w + 'px';
-            }
+            applyContainerWidth(w);
             localStorage.setItem('containerWidth', w);
         };
 
         const savedWidth = localStorage.getItem('containerWidth');
         if (savedWidth) {
             containerWidthSlider.value = savedWidth;
-            containerWidthValue.textContent = savedWidth + 'px';
-            if (mainContainer) {
-                mainContainer.style.maxWidth = savedWidth + 'px';
-            }
+            applyContainerWidth(savedWidth);
+            window.addEventListener('resize', () => applyContainerWidth(containerWidthSlider.value));
         } else {
-            if (mainContainer) {
-                mainContainer.style.maxWidth = '1000px';
-            }
+            applyContainerWidth(1000);
+            window.addEventListener('resize', () => applyContainerWidth(containerWidthSlider.value));
         }
 
         // 【2026-09-30】日期是否显示年份：切换后立即重绘两个视图（表格 + 卡片），

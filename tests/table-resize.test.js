@@ -79,7 +79,7 @@ test('web/table-resize.js 与主版本完全一致', () => {
 
 test('sw.js：版本升到 v2.2.7 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.1';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.2';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -141,6 +141,22 @@ test('两版 renderer 都有历史表格解冻迁移（只跑一次）', () => {
             f + ' 迁移没有挑选冻结表格');
         assert.ok(src.includes('walk(notes)') && src.includes('walk(archivedNotes)'),
             f + ' 迁移没有覆盖 notes / archivedNotes');
+    });
+});
+
+/**
+ * 【2026-11-12】界面宽度溢出钉子（CR-036）：
+ * 用户把「整体界面宽度」设成 1700px 而窗口只有 ~1090px，容器按 1700 铺开，
+ * 右侧跑出窗口且无横向滚动 → 内容连表格一起被切掉看不见。
+ * 修复：maxWidth = min(设置值, 100%)，窗口缩放时重算。
+ */
+test('界面宽度被夹在窗口内（min(设置值, 100%)）', () => {
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(src.includes('applyContainerWidth'), f + ' 缺少 applyContainerWidth');
+        assert.ok(src.includes("maxWidth = 'min(' + w + 'px, 100%)'"), f + ' 宽度没有夹在 100% 内');
+        assert.ok(src.includes("addEventListener('resize', () => applyContainerWidth"),
+            f + ' 窗口缩放没有重算宽度');
     });
 });
 
