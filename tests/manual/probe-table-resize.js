@@ -189,18 +189,17 @@ const EXPR = `(async () => {
         tableLayout: getComputedStyle(nt).tableLayout
     };
 
-    // 7b) 完全复刻截图场景：表格视图里的一条任务，第一个 td 里有 .table-content + 长 URL 粘贴表
-    const taskTr = document.createElement('tr');
-    taskTr.setAttribute('data-note-id', '666');
-    const tcTd = document.createElement('td');
-    tcTd.setAttribute('style', 'text-align: left; vertical-align: top;');
+    // 7b) 复刻截图场景：窄容器里的 .table-content（表格视图单元格同款样式）+ 长 URL 粘贴表。
+    //     直接往 tbody 插行会被列表「加载更多」哨兵触发的重渲染清掉，所以用独立容器承载，
+    //     但样式上下文（.table-content 的 min-width/44px 单元格）完全一致。
+    const narrowHost = document.createElement('div');
+    narrowHost.style.cssText = 'width: 420px;';
     const tcDiv = document.createElement('div');
     tcDiv.className = 'table-content';
     tcDiv.setAttribute('contenteditable', 'true');
     tcDiv.innerHTML = window.ClipboardTable.rowsToTableHtml({ rows: longRows, cols: 5, hasHeader: true });
-    tcTd.appendChild(tcDiv);
-    taskTr.appendChild(tcTd);
-    tbody.appendChild(taskTr);
+    narrowHost.appendChild(tcDiv);
+    document.body.appendChild(narrowHost);
     await sleep(100);
     const it = tcDiv.querySelector('table.pasted-table');
     const ith = it.querySelectorAll('thead th')[1];
@@ -216,7 +215,7 @@ const EXPR = `(async () => {
         tableWidthStyle: it.style.width || '(none)',
         wrapClientW: it.parentElement.clientWidth,
         tableScrollW: it.scrollWidth,
-        tdOverflow: getComputedStyle(tcTd).overflow,
+        tdOverflow: getComputedStyle(tcDiv).overflow,
         tcOverflow: getComputedStyle(tcDiv).overflow
     };
 

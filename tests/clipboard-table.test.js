@@ -195,3 +195,33 @@ test('cellParts：纯文字单元格不会产出图片片段', () => {
     assert.deepEqual(CT.cellParts(''), []);
     assert.deepEqual(CT.cellParts(null), []);
 });
+
+// 【2026-11-12】粘贴保留源表格列宽比例：腾讯文档的表带 colgroup/首行 width，
+// 丢掉后按内容平均分，长文本列被挤爆、表格顶出右边界。
+test('列宽比例：colgroup 的 px 宽度被换算成百分比', () => {
+    const html = '<table><colgroup><col style="width:120px"><col style="width:360px"></colgroup>' +
+        '<tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>';
+    const data = CT.extract(html, '');
+    assert.deepEqual(data.colWidths, [25, 75]);
+    const out = CT.rowsToTableHtml(data);
+    assert.match(out, /<colgroup><col style="width:25%"><col style="width:75%"><\/colgroup>/);
+});
+
+test('列宽比例：没有 colgroup 时退回首行单元格 width', () => {
+    const html = '<table><tr><td width="200">a</td><td width="200">b</td><td width="400">c</td></tr>' +
+        '<tr><td>1</td><td>2</td><td>3</td></tr></table>';
+    const data = CT.extract(html, '');
+    assert.deepEqual(data.colWidths, [25, 25, 50]);
+});
+
+test('列宽比例：宽度信息缺失/数量对不上则不输出 colgroup（交还自动布局）', () => {
+    const html = '<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>';
+    const data = CT.extract(html, '');
+    assert.strictEqual(data.colWidths, null);
+    assert.ok(!CT.rowsToTableHtml(data).includes('<colgroup>'));
+});
+
+test('列宽比例：百分比之和恒为 100（四舍五入不跑偏）', () => {
+    const w = CT.extractColWidths('<table><colgroup><col width="1"><col width="2"><col width="3"></colgroup></table>', 3);
+    assert.strictEqual(w.reduce((a, b) => a + b, 0), 100);
+});

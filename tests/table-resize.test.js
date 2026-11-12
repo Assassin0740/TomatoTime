@@ -79,7 +79,7 @@ test('web/table-resize.js 与主版本完全一致', () => {
 
 test('sw.js：版本升到 v2.2.7 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.2.9';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.0';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -109,6 +109,23 @@ test('内容表拖列前冻结几何（table-layout:fixed）', () => {
     // 冻结后表宽必须跟着列宽同步增减，否则 fixed 布局会按比例缩放
     assert.ok(/data-rsz-frozen'\)\) \{[\s\S]{0,200}table\.style\.width/.test(src),
         '拖列时表宽没有随列宽同步更新');
+});
+
+/**
+ * 【2026-11-12】溢出钉子：拖过的表格记住绝对像素宽度，窗口变窄/拖太宽会顶出右边界
+ * （max-width 对 table 不生效，实测 2400px 的表直接伸出屏幕 1395px）。必须有 JS 兜底贴合。
+ */
+test('冻结表格宽度会夹回容器（fitTableToWidth）', () => {
+    const src = read('table-resize.js');
+    assert.ok(src.includes('function fitTableToWidth'), '缺少 fitTableToWidth');
+    assert.ok(src.includes('function fitAllFrozenTables'), '缺少 fitAllFrozenTables');
+    assert.ok(/if \(!isTaskTable\(table\)\) freezeTableLayout\(table\);/.test(src));
+    // 拖拽结束要贴合
+    assert.ok(/else if \(drag\.kind === 'col'\) \{[\s\S]{0,120}fitTableToWidth/.test(src),
+        '拖拽结束后没有贴合容器');
+    // 窗口缩放 + 新内容渲染要贴合
+    assert.ok(src.includes("addEventListener('resize', scheduleFit)"), '窗口缩放没有触发贴合');
+    assert.ok(src.includes('new MutationObserver(scheduleFit)'), '新渲染的内容没有兜底贴合');
 });
 
 test('两版 CSS 都有拖拽期防选中规则', () => {

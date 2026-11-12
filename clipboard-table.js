@@ -223,7 +223,10 @@
         const nonEmpty = rows.reduce((n, row) => n + row.filter(isFilled).length, 0);
         // 网页布局用的单列 <table> / 空壳表格不当成数据表格
         if (cols < 2 || nonEmpty < 2) return null;
-        return { rows: rows, rowCount: rows.length, cols: cols, source: 'html', hasHeader: hasHeader };
+        return {
+            rows: rows, rowCount: rows.length, cols: cols, source: 'html', hasHeader: hasHeader,
+            colWidths: extractColWidths(table[0] || '', cols)
+        };
     }
 
     /**
@@ -274,6 +277,38 @@
         return parseHtmlTable(html) || parseTsv(plain) || null;
     }
 
+    /**
+     * 【2026-11-12】抠出源表格的列宽比例。
+     * 腾讯文档/Excel 复制出来的表常带 <colgroup><col style="width:120px"> 或首行单元格
+     * style="width:.."，旧实现全部丢掉 → 粘进来按内容平均分，长文本列被挤爆。
+     * 这里只取「相对比例」并换算成百分比，保证表格永远按容器宽度铺开、不溢出。
+     * 返回 [number] 百分比（总和 = 100）或 null。
+     */
+    function extractColWidths(tableHtml, cols) {
+        const nums = [];
+        const colTags = String(tableHtml || '').match(/<col\b[^>]*>/gi) || [];
+        colTags.forEach(tag => {
+            const w = parseFloat(attrValue(tag, 'width')) || parseFloat((/width\s*:\s*([\d.]+)/i.exec(tag) || [])[1]);
+            nums.push(isFinite(w) && w > 0 ? w : 0);
+        });
+        let widths = nums;
+        if (!widths.length) {
+            // 退化：取首行 <td>/<th> 上的 width（腾讯文档有时不给 colgroup）
+            const firstRow = /<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/i.exec(tableHtml);
+            if (firstRow) {
+                const cells = firstRow[1].match(/<(td|th)\b[^>]*>/gi) || [];
+                cells.forEach(tag => {
+                    const w = parseFloat(attrValue(tag, 'width')) || parseFloat((/width\s*:\s*([\d.]+)/i.exec(tag) || [])[1]);
+                    widths.push(isFinite(w) && w > 0 ? w : 0);
+                });
+            }
+        }
+        if (widths.length !== cols || widths.some(w => !w)) return null;
+        const sum = widths.reduce((a, b) => a + b, 0);
+        if (!sum) return null;
+        return widths.map(w => +(w / sum * 100).toFixed(2));
+    }
+
     /** 单元格 → 可插入的 innerHTML：文字转义、换行转 <br>、图片保留为 <img> */
     function cellHtml(cell) {
         if (cell && typeof cell === 'object') {
@@ -296,6 +331,11 @@
         const hasHeader = data.hasHeader !== false;
         const headRows = hasHeader ? rows.slice(0, 1) : [];
         const bodyRows = hasHeader ? rows.slice(1) : rows;
+        // 【2026-11-12】保留复制来源的列宽比例（百分比，随容器自适应，不会溢出）
+        const cw = data.colWidths;
+        const colgroup = (Array.isArray(cw) && cw.length === cols)
+            ? '<colgroup>' + cw.map(w => '<col style="width:' + w + '%">').join('') + '</colgroup>'
+            : '';
         const thead = headRows.length
             ? '<thead>' + headRows.map(r => '<tr>' + r.map(c => '<th>' + cellHtml(c) + '</th>').join('') + '</tr>').join('') + '</thead>'
             : '';
@@ -303,7 +343,7 @@
             ? '<tbody>' + bodyRows.map(r => '<tr>' + r.map(c => '<td>' + cellHtml(c) + '</td>').join('') + '</tr>').join('') + '</tbody>'
             : '';
         return '<div class="pasted-table-wrap"><table class="pasted-table" data-rows="' +
-            rows.length + '" data-cols="' + cols + '">' + thead + tbody + '</table></div>';
+            rows.length + '" data-cols="' + cols + '">' + colgroup + thead + tbody + '</table></div>';
     }
 
     return {
@@ -314,6 +354,7 @@
         parseHtmlTable: parseHtmlTable,
         parseTsv: parseTsv,
         extract: extract,
+        extractColWidths: extractColWidths,
         rowsToTableHtml: rowsToTableHtml
     };
 });

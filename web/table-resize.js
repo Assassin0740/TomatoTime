@@ -241,6 +241,60 @@
         table.removeAttribute('data-rsz-frozen');
     }
 
+    /**
+     * 【2026-11-12】把冻结表格的宽度夹回容器：按比例缩放所有列。
+     * 起因：拖过列宽的表格记住的是绝对像素宽度，窗口变窄 / 拖得太宽时会直接
+     * 顶出屏幕右边界（max-width 对表格不生效），内容看不见。
+     * 缩放保持各列比例，拖拽仍然是有效的（列宽是比例份额，拖大就挤窄其他列）。
+     */
+    function fitTableToWidth(table) {
+        if (!table || !table.getAttribute('data-rsz-frozen')) return false;
+        const wrap = table.parentElement;
+        if (!wrap) return false;
+        const avail = wrap.clientWidth;
+        if (!avail) return false;
+        const firstRow = table.rows && table.rows[0];
+        if (!firstRow || !firstRow.children.length) return false;
+
+        const current = [];
+        let total = 0;
+        for (let i = 0; i < firstRow.children.length; i++) {
+            const w = Math.round(firstRow.children[i].getBoundingClientRect().width);
+            current.push(w);
+            total += w;
+        }
+        if (!total || total <= avail) return false; // 没超，保持用户拖出来的宽度
+
+        const ratio = avail / total;
+        const widths = current.map(w => Math.max(MIN_COL, Math.round(w * ratio)));
+        // 取整可能多出 1-2px，从最宽的一列里扣掉，确保永远不超容器
+        let sum = widths.reduce((a, b) => a + b, 0);
+        while (sum > avail) {
+            const i = widths.indexOf(Math.max.apply(null, widths));
+            if (widths[i] <= MIN_COL) break;
+            widths[i] -= 1;
+            sum -= 1;
+        }
+        for (let r = 0; r < table.rows.length; r++) {
+            const cells = table.rows[r].children;
+            for (let i = 0; i < cells.length; i++) {
+                cells[i].style.width = (widths[i] || MIN_COL) + 'px';
+                cells[i].style.boxSizing = 'border-box';
+            }
+        }
+        table.style.width = widths.reduce((a, b) => a + b, 0) + 'px';
+        return true;
+    }
+
+    /** 页面里所有冻结表格贴合容器（重开应用读到旧内容 / 窗口缩放时统一兜住） */
+    function fitAllFrozenTables(root) {
+        const scope = root && root.querySelectorAll ? root : document;
+        const tables = scope.querySelectorAll('table[data-rsz-frozen]');
+        let n = 0;
+        for (let i = 0; i < tables.length; i++) if (fitTableToWidth(tables[i])) n++;
+        return n;
+    }
+
     function isTaskTable(table) {
         return !!(table && table.matches && table.matches('table.task-table'));
     }
@@ -358,6 +412,9 @@
                     layout.rowHeights[drag.noteId] = drag.lastH;
                 }
                 saveLayout(layout);
+            } else if (drag.kind === 'col') {
+                // 拖太宽就按比例缩回容器，绝不让内容跑到屏幕外
+                fitTableToWidth(drag.table);
             }
             document.body.classList.remove('table-resizing');
             document.body.style.cursor = '';
@@ -420,6 +477,19 @@
 
         // 拖拽中途切窗口 / 失焦，别让拖拽状态卡死
         window.addEventListener('blur', () => { if (drag) endDrag(); });
+
+        // 【2026-11-12】冻结表格宽度兜底：重开应用读到旧内容、窗口缩放、
+        // 新渲染出来的笔记/任务内容，都可能带来「比容器宽」的冻结表 —— 统一夹回来
+        let fitTimer = 0;
+        const scheduleFit = () => {
+            if (fitTimer) return;
+            fitTimer = setTimeout(() => { fitTimer = 0; fitAllFrozenTables(document); }, 150);
+        };
+        window.addEventListener('resize', scheduleFit);
+        try {
+            new MutationObserver(scheduleFit).observe(document.body, { childList: true, subtree: true });
+        } catch (e) { /* 老环境没有 MutationObserver 就只靠 resize */ }
+        scheduleFit();
     }
 
     init();
@@ -439,6 +509,8 @@
         isResizable: isResizable,
         freezeTableLayout: freezeTableLayout,
         unfreezeTableLayout: unfreezeTableLayout,
+        fitTableToWidth: fitTableToWidth,
+        fitAllFrozenTables: fitAllFrozenTables,
         applyTaskTableLayout: applyTaskTableLayout,
         MIN_COL: MIN_COL,
         MIN_ROW: MIN_ROW

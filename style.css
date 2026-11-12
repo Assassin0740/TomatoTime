@@ -2787,6 +2787,10 @@
             border-collapse: collapse;
             width: auto;
             min-width: 100%;
+            /* 【2026-11-12】永远不许顶出容器右边界：手动拖过列宽的表格会记住像素宽度，
+               窗口变窄/拖太宽时会溢出到屏幕外、连滚动条都看不见。max-width 兜住，
+               拖拽仍按列宽比例生效（table-layout:fixed 下列宽是比例份额）。 */
+            max-width: 100%;
             font-size: 13px;
             line-height: 1.45;
             color: #eee;
