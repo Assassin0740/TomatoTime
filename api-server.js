@@ -233,23 +233,126 @@ function createApiServer(hooks) {
         return task;
     }
 
+    /**
+     * 【2026-11-12 CR-038】结构化检索。
+     * 以前只有 scope + keyword + limit，「找出本周高优未完成带提醒的任务」说不出来。
+     * 现在过滤条件都在服务端做（数据本来就全量在内存里，比让脚本自己遍历省事）：
+     *   project / priority / type / done / hasTable / remind / from / to / dateField
+     *   sort / order / offset / limit
+     * 返回里额外给 total（过滤后、分页前的条数），方便脚本判断要不要翻页。
+     */
     async function handleTasksGet(url) {
-        const scope = url.searchParams.get('scope') || 'active';
-        const limit = parseInt(url.searchParams.get('limit') || '0', 10) || 0;
-        const keyword = url.searchParams.get('keyword') || '';
+        const q = url.searchParams;
+        const scope = q.get('scope') || 'active';
+        const limit = parseInt(q.get('limit') || '0', 10) || 0;
+        const offset = parseInt(q.get('offset') || '0', 10) || 0;
+        const keyword = q.get('keyword') || '';
         const res = await withTimeout(hooks.invokeRenderer('list', {}), REQUEST_TIMEOUT_MS, '读取任务');
         let items = res.notes || [];
         if (scope === 'archive') items = res.archived || [];
         else if (scope === 'all') items = (res.notes || []).concat(res.archived || []);
+
         if (keyword) {
             const k = keyword.toLowerCase();
             items = items.filter(n => {
                 const text = String(n.content || '').replace(/<[^>]*>/g, ' ');
-                return text.toLowerCase().indexOf(k) !== -1;
+                // 评论也一起搜，否则「记在评论里的结论」永远找不到
+                const cm = (n.comments || []).map(c => (typeof c === 'string' ? c : c && c.text) || '').join(' ');
+                return (text + ' ' + cm).toLowerCase().indexOf(k) !== -1;
             });
         }
+
+        const project = q.get('project');
+        if (project !== null && project !== '') {
+            items = project === '-' || project === 'null'
+                ? items.filter(n => !n.project)                     // 未归项目
+                : items.filter(n => String(n.project || '') === project);
+        }
+
+        const priority = q.get('priority') !== null ? q.get('priority') : q.get('p');
+        if (priority !== null && priority !== '') {
+            const want = parsePriority(priority);
+            items = items.filter(n => parsePriority(n.p) === want);
+        }
+
+        const type = q.get('type');
+        if (type) {
+            const want = parseType(type);
+            items = items.filter(n => parseType(n.type) === want);
+        }
+
+        const done = q.get('done');
+        if (done !== null && done !== '') {
+            const want = !/^(0|false|no|未完成|否)$/i.test(String(done));
+            items = items.filter(n => !!n.done === want);
+        }
+        if (q.get('todo') === '1' || q.get('todo') === 'true') items = items.filter(n => !n.done);
+
+        const hasTable = q.get('hasTable');
+        if (hasTable !== null && hasTable !== '') {
+            const want = !/^(0|false|no)$/i.test(String(hasTable));
+            items = items.filter(n => /<table[\s>]/i.test(String(n.content || '')) === want);
+        }
+
+        const remind = q.get('remind');
+        if (remind === 'pending' || remind === '1') items = items.filter(n => Number(n.remindAt) > 0);
+        else if (remind === 'none' || remind === '0') items = items.filter(n => !Number(n.remindAt));
+
+        // 时间区间：默认按创建时间（id 就是创建毫秒时间戳），也可用 dateField=remind 按提醒时间
+        const from = parseBound(q.get('from'), false);
+        const to = parseBound(q.get('to'), true);
+        if (from !== null || to !== null) {
+            const field = (q.get('dateField') || 'created').toLowerCase();
+            items = items.filter(n => {
+                const v = Number(field === 'remind' ? n.remindAt : n.id);
+                if (!v) return false;
+                if (from !== null && v < from) return false;
+                if (to !== null && v > to) return false;
+                return true;
+            });
+        }
+
+        const sortKey = (q.get('sort') || '').toLowerCase();
+        if (sortKey) {
+            const dir = (q.get('order') || 'desc').toLowerCase() === 'asc' ? 1 : -1;
+            const val = n => {
+                switch (sortKey) {
+                    case 'priority': case 'p': return parsePriority(n.p);
+                    case 'remind': case 'remindat': return Number(n.remindAt) || 0;
+                    case 'done': return n.done ? 1 : 0;
+                    case 'len': case 'size': return String(n.content || '').length;
+                    case 'created': case 'id': case 'ts': default: return Number(n.id) || 0;
+                }
+            };
+            items = items.slice().sort((a, b) => (val(a) - val(b)) * dir);
+        }
+
+        const total = items.length;
+        if (offset > 0) items = items.slice(offset);
         if (limit > 0) items = items.slice(0, limit);
-        return { ok: true, count: items.length, tasks: items };
+        return { ok: true, total: total, count: items.length, tasks: items };
+    }
+
+    /** '2026-11-01' → 当天 00:00；'2026-11-01 18:00' → 该时刻；数字当时间戳。to=true 且只给日期时取当天 23:59:59.999 */
+    function parseBound(v, isEnd) {
+        if (v === null || v === undefined || v === '') return null;
+        const s = String(v).trim();
+        if (/^\d+$/.test(s)) {
+            const n = Number(s);
+            if (n > 1e12) return n;
+            const asDate = /^\d{8}$/.test(s)
+                ? new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8))
+                : null;
+            if (asDate) return isEnd ? asDate.setHours(23, 59, 59, 999) : asDate.setHours(0, 0, 0, 0);
+            return n * 1000;                                       // 秒级时间戳
+        }
+        const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (m) {
+            const d = new Date(+m[1], m[2] - 1, +m[3]);
+            return isEnd ? d.setHours(23, 59, 59, 999) : d.setHours(0, 0, 0, 0);
+        }
+        const t = new Date(s.replace(' ', 'T')).getTime();
+        return isNaN(t) ? null : t;
     }
 
     async function handleTasksPost(body) {
@@ -306,14 +409,20 @@ function createApiServer(hooks) {
             endpoints: [
                 { method: 'GET', path: '/api/health', desc: '健康检查与当前计时状态' },
                 { method: 'GET', path: '/api/schema', desc: '本接口说明（给你自描述用）' },
-                { method: 'GET', path: '/api/tasks?scope=active|archive|all&keyword=&limit=', desc: '列出任务' },
+                {
+                    method: 'GET',
+                    path: '/api/tasks?scope=active|archive|all&keyword=&limit=',
+                    desc: '列出任务；过滤参数 project / priority / type / done / hasTable / remind=pending|none / ' +
+                        'from / to（2026-11-01 或时间戳）/ dateField=created|remind / sort=created|priority|remind|len / ' +
+                        'order=asc|desc / offset / limit；返回 {total,count,tasks}'
+                },
                 { method: 'POST', path: '/api/tasks', desc: '新增任务；body 也支持 {tasks:[...]} 批量' },
                 { method: 'GET', path: '/api/tasks/:id', desc: '查询单条任务' },
                 { method: 'PATCH', path: '/api/tasks/:id', desc: '修改任务（内容/优先级/类型/项目/完成/提醒）' },
                 { method: 'DELETE', path: '/api/tasks/:id', desc: '删除任务' },
                 { method: 'POST', path: '/api/tasks/:id/comments', desc: '给任务追加评论 {text}' },
                 { method: 'GET', path: '/api/tasks/:id/table', desc: '读取任务内容里每张表格的尺寸（行数/列数/列宽/行高/是否冻结）' },
-                { method: 'POST', path: '/api/tasks/:id/table', desc: '改表格尺寸 {action:"set"|"auto", index, width:"900"|"80%", cols:"120,240,*", rows:[{row,height}]}' },
+                { method: 'POST', path: '/api/tasks/:id/table', desc: '改表格尺寸 {action:"set"|"auto"|"insert", index, width:"900"|"80%", cols:"120,240,*", rows:[{row,height}]}；insert 支持 {head:[…], data:[[…]], at:"end"|"start"}' },
                 { method: 'GET', path: '/api/table-view', desc: '读取任务表格视图的列宽 / 行高（localStorage）' },
                 { method: 'POST', path: '/api/table-view', desc: '改表格视图 {colWidths:{"0":200}, rowHeights:{"<noteId>":80}}；{action:"reset"} 恢复默认' },
                 { method: 'GET', path: '/api/timer', desc: '计时器状态' },

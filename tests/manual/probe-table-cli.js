@@ -41,7 +41,18 @@ const server = http.createServer((req, res) => {
         const m = req.url.match(/^\/api\/tasks\/(\d+)\/table/);
         if (m) {
             if (req.method === 'GET') return json({ ok: true, id: Number(m[1]), action: 'info', count: 1, tables: [TABLE] });
-            return json({ ok: true, id: Number(m[1]), action: body.action, count: 1, tables: [TABLE] });
+            return json({ ok: true, id: Number(m[1]), action: body.action, count: 1, tables: [TABLE],
+                at: body.at, rows: 3, cols: 2, hasHeader: !!body.head });
+        }
+        if (req.url.indexOf('/api/tasks?') === 0) {
+            const tasks = [
+                { id: 1792651868602, content: '带表的任务 <table><tr><td>a</td></tr></table>', p: 3, type: 'short' },
+                { id: 1792651859171, content: '普通任务', p: 1, type: 'short' }
+            ];
+            return json({ ok: true, total: 7, count: tasks.length, tasks: tasks });
+        }
+        if (req.url.indexOf('/api/health') === 0) {
+            return json({ ok: true, version: '0.0.0', timer: { isRunning: false, isWorking: true, currentTime: 0 }, floatWindowOpen: false });
         }
         json({ ok: true });
     });
@@ -106,6 +117,63 @@ function run(args) {
     // 5) 报错要说人话
     const bad = await run(['table', 'info']);
     checks.missingIdHint = bad.out.indexOf('缺少任务 id') !== -1;
+
+    // 6) table add —— 插一张新表
+    const add = await run(['table', 'add', '1792651868602', '--head', '渠道,账号',
+        '--data', 'oppo|cat;vivo|cat2', '--at', 'start', '--width', '900']);
+    const addReq = received.filter(r => r.method === 'POST' && /\/table$/.test(r.url)).pop();
+    diag.addBody = addReq && addReq.body;
+    checks.addAction = !!(addReq && addReq.body.action === 'insert');
+    checks.addHead = !!(addReq && JSON.stringify(addReq.body.head) === JSON.stringify(['渠道', '账号']));
+    checks.addData = !!(addReq && JSON.stringify(addReq.body.data) === JSON.stringify([['oppo', 'cat'], ['vivo', 'cat2']]));
+    checks.addAt = !!(addReq && addReq.body.at === 'start');
+    checks.addWidth = !!(addReq && addReq.body.width === '900');
+    checks.addPrinted = add.out.indexOf('开头插入 3 行 × 2 列') !== -1;
+
+    // --cols 纯数字 = 列数；--cols 120,240,* = 列宽（同一个参数不能既当数量又当尺寸）
+    const addCount = await run(['table', 'add', '1', '--cols', '3', '--rows', '2']);
+    const countBody = received.filter(r => r.method === 'POST' && /\/table$/.test(r.url)).pop().body;
+    diag.addCountBody = countBody;
+    checks.addColsAsCount = countBody.cols === 3 && countBody.colWidths === undefined;
+    checks.addRowsAsCount = countBody.rows === 2;
+
+    const addWidths = await run(['table', 'add', '1', '--cols', '120,240,*']);
+    const widthsBody = received.filter(r => r.method === 'POST' && /\/table$/.test(r.url)).pop().body;
+    checks.addColsAsWidths = widthsBody.colWidths === '120,240,*' && widthsBody.cols === undefined;
+
+    const addRowsBad = await run(['table', 'add', '1', '--rows', '2=60']);
+    checks.addRowsRejected = addRowsBad.out.indexOf('只能给行数') !== -1;
+
+    // 7) query —— 只看打出去的 URL 参数对不对
+    const q = await run(['query', '--project', '拯救小猫', '-p', 'high', '--has-table',
+        '--from', '2026-11-01', '--to', '2026-11-12', '--sort', 'priority', '--order', 'desc', '--limit', '5']);
+    const qUrl = received.filter(r => r.url.indexOf('/api/tasks?') === 0).pop().url;
+    const qp = new URL(qUrl, 'http://x').searchParams;
+    diag.queryUrl = qUrl;
+    checks.queryProject = qp.get('project') === '拯救小猫';
+    checks.queryPriority = qp.get('priority') === 'high';
+    checks.queryHasTable = qp.get('hasTable') === 'true';
+    checks.queryFrom = qp.get('from') === '2026-11-01' && qp.get('to') === '2026-11-12';
+    checks.querySort = qp.get('sort') === 'priority' && qp.get('order') === 'desc';
+    checks.queryLimit = qp.get('limit') === '5';
+    checks.queryPrinted = q.out.indexOf('#1792651868602') !== -1 && q.out.indexOf('共 2 条') !== -1;
+
+    const qDone = await run(['query', '--done', '--no-table']);
+    const dp = new URL(received.filter(r => r.url.indexOf('/api/tasks?') === 0).pop().url, 'http://x').searchParams;
+    checks.queryDoneFlag = dp.get('done') === 'true' && dp.get('hasTable') === 'false';
+
+    const qCount = await run(['query', '--count']);
+    checks.queryCount = qCount.out.trim() === '7';
+
+    const qIds = await run(['query', '--only-ids']);
+    checks.queryIds = qIds.out.trim() === '1792651868602,1792651859171';
+
+    // 8) doctor —— 对假 API 也能跑通（读的是真实数据文件，只读）
+    const doc = await run(['doctor']);
+    diag.doctorOut = doc.out.trim().split('\n').slice(-3).join(' | ');
+    checks.doctorApiOk = doc.out.indexOf('API 在线') !== -1;
+    checks.doctorHasData = /任务 \d+ 条（归档 \d+/.test(doc.out) && /结论：/.test(doc.out);
+    checks.doctorExitOk = doc.code === 0;
 
     const failed = Object.keys(checks).filter(k => checks[k] !== true);
     console.log(JSON.stringify({ pass: failed.length === 0, failed: failed, checks: checks, diag: diag }, null, 1));

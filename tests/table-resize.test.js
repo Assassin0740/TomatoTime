@@ -77,9 +77,9 @@ test('web/table-resize.js 与主版本完全一致', () => {
     assert.strictEqual(read('table-resize.js'), read('web/table-resize.js'));
 });
 
-test('sw.js：版本升到 v2.3.3 且预缓存清单含 table-resize.js', () => {
+test('sw.js：版本升到 v2.3.4 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.3';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.4';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -236,9 +236,78 @@ test('CLI 有 table 子命令与帮助文本', () => {
     const src = read('timer-cli.js');
     assert.ok(/async table\(args\) \{/.test(src), '缺少 table 命令');
     assert.ok(src.includes("'/api/tasks/' + id + '/table'"), 'CLI 没有调用表格接口');
-    assert.ok(src.includes("table <info|set|auto|view>"), '帮助文本缺少 table');
+    assert.ok(src.includes("table <info|add|set|auto|view>"), '帮助文本缺少 table');
     assert.ok(src.includes('function rowSpecs'), '缺少行高参数解析');
     assert.ok(/table: \['action', 'id', 'value'\]/.test(src), '缺少 table 的位置参数映射');
+});
+
+// ---------- 新建表格（CR-038） ----------
+
+test('buildTableHtml：表头 + 参差不齐的行会被补成矩形', () => {
+    const r = TableResize.buildTableHtml({ head: ['渠道', '账号'], data: [['oppo', 'cat'], ['vivo']] });
+    assert.strictEqual(r.rows, 3);
+    assert.strictEqual(r.cols, 2);
+    assert.ok(r.hasHeader);
+    assert.ok(r.html.includes('<thead><tr><th>渠道</th><th>账号</th></tr></thead>'));
+    assert.ok(r.html.includes('<td>vivo</td><td></td>'), '短行没有补空单元格');
+});
+
+test('buildTableHtml：结构和粘贴出来的表格一致（.pasted-table-wrap > table.pasted-table）', () => {
+    const r = TableResize.buildTableHtml({ data: [['a', 'b']] });
+    // 结构一致 = 已有的列宽 / 图片自适应 / 导出逻辑都不用另写一套
+    assert.ok(/^<div class="pasted-table-wrap"><table class="pasted-table" data-rows="1" data-cols="2">/.test(r.html));
+    assert.ok(!r.hasHeader, '没给 head 就不该有 thead');
+});
+
+test('buildTableHtml：只给行列数 → 空网格；单元格会被转义', () => {
+    const grid = TableResize.buildTableHtml({ cols: 2, rows: 3 });
+    assert.strictEqual(grid.rows, 3);
+    assert.strictEqual((grid.html.match(/<tr>/g) || []).length, 3);
+    const esc = TableResize.buildTableHtml({ data: [['a<b', 'c&d"e']] });
+    assert.ok(esc.html.includes('a&lt;b'));
+    assert.ok(esc.html.includes('c&amp;d&quot;e'));
+    assert.ok(!esc.html.includes('<b>'));
+});
+
+test('buildTableHtml：列数取各行最大值；hasHeader:false 时不加表头', () => {
+    const r = TableResize.buildTableHtml({ head: ['h'], data: [['a', 'b', 'c']], hasHeader: false });
+    assert.strictEqual(r.cols, 3);
+    assert.ok(!r.html.includes('<thead'));
+    assert.strictEqual(r.rows, 1);
+});
+
+test('renderer 在 case \'table\' 里处理 insert（双副本一致）', () => {
+    // 【2026-11-12 教训】api-server 把 /api/tasks/:id/table 统一映射成 op 'table'，
+    // 一开始写成独立的 case 'table-insert' 永远走不到；而且插入场景本来就没有表，
+    // 必须放在「没有表格就报错」那句之前。
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(src.includes("action === 'insert'"), f + ' 缺少 insert 分支');
+        assert.ok(src.includes('TableResize.buildTableHtml'), f + ' 没有调用 buildTableHtml');
+        const insertAt = src.indexOf("action === 'insert'");
+        const noTableAt = src.indexOf('这条任务里没有表格');
+        assert.ok(insertAt !== -1 && noTableAt !== -1 && insertAt < noTableAt,
+            f + ' insert 分支必须在「没有表格」判断之前');
+    });
+});
+
+test('CLI 有 table add 与 query / doctor 命令', () => {
+    const src = read('timer-cli.js');
+    assert.ok(src.includes("action: 'insert'"), 'CLI 没有支持插入表格');
+    assert.ok(src.includes('function tableRows'), '缺少 --data 解析');
+    assert.ok(/async query\(args\) \{/.test(src), '缺少 query 命令');
+    assert.ok(/async doctor\(args\) \{/.test(src), '缺少 doctor 命令');
+    assert.ok(src.includes("qs.set('hasTable'"), 'query 没有传 hasTable');
+    assert.ok(src.includes('ELECTRON_RUN_AS_NODE'), 'doctor 没有检查那个坑人的环境变量');
+});
+
+test('api-server 的 GET /api/tasks 支持结构化过滤', () => {
+    const src = read('api-server.js');
+    ['project', 'priority', 'hasTable', 'dateField', 'offset'].forEach(k => {
+        assert.ok(src.includes("q.get('" + k + "')") || src.includes("'" + k + "'"), '缺少过滤参数 ' + k);
+    });
+    assert.ok(src.includes('function parseBound'), '缺少日期边界解析');
+    assert.ok(src.includes('total: total'), '返回里没有 total');
 });
 
 test('两版 CSS 都有拖拽期防选中规则', () => {

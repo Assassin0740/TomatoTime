@@ -237,8 +237,7 @@ function printTableInfo(index, t) {
 }
 
 /** 任务表格视图的 localStorage 布局摘要 */
-function printViewLayout(layout) {
-    const l = layout || {};
+function printViewLayout(layout) {    const l = layout || {};
     const cols = l.colWidths || {};
     const rows = l.rowHeights || {};
     const colKeys = Object.keys(cols).sort((a, b) => Number(a) - Number(b));
@@ -251,6 +250,82 @@ function printViewLayout(layout) {
     if (Object.keys(rows).length) {
         console.log('行高：%s', Object.keys(rows).map(k => '#' + k + '=' + rows[k] + 'px').join('  '));
     }
+}
+
+// ---------------------------------------------------------------- 新建表格的参数
+
+/** '渠道,账号|密码' → ['渠道','账号','密码']（中英文逗号、竖线都当分隔符） */
+function splitCells(s) {
+    return String(s === undefined || s === null ? '' : s).split(/[,，|]/).map(x => x.trim());
+}
+
+/** --data 'a|b;c|d' 或多次 --data 'a|b' → [['a','b'],['c','d']] */
+function tableRows(list) {
+    const out = [];
+    (list || []).forEach(chunk => {
+        String(chunk).split(/[;；]/).forEach(raw => {
+            const row = raw.trim();
+            if (row) out.push(row.split('|').map(c => c.trim()));
+        });
+    });
+    return out;
+}
+
+/** 纯数字 → 列数 / 行数；否则当列宽规格（120,240,*） */
+function isCount(v) {
+    return v !== undefined && /^\d+$/.test(String(v).trim());
+}
+
+// ---------------------------------------------------------------- 自检（doctor）
+
+function humanSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+/** 目录里的文件数与总大小（不递归，缺失目录返回 null） */
+function dirStats(dir) {
+    if (!dir || !fs.existsSync(dir)) return null;
+    let files = 0, bytes = 0;
+    try {
+        fs.readdirSync(dir).forEach(name => {
+            const p = path.join(dir, name);
+            const st = fs.statSync(p);
+            if (st.isFile()) { files++; bytes += st.size; }
+        });
+    } catch (e) {
+        return null;
+    }
+    return { files: files, bytes: bytes };
+}
+
+/** 读 app-data.json：结构是 { __v, savedAt, data:{ notes:"[...]", ... } }，notes 可能是 JSON 字符串 */
+function readAppData(dir) {
+    const p = path.join(dir, 'app-data.json');
+    if (!fs.existsSync(p)) return null;
+    const raw = fs.readFileSync(p, 'utf8');
+    const outer = JSON.parse(raw);
+    const data = outer.data || {};
+    const parseList = v => {
+        if (Array.isArray(v)) return v;
+        if (typeof v === 'string') {
+            try { return JSON.parse(v) || []; } catch (e) { return []; }
+        }
+        return [];
+    };
+    return {
+        file: p,
+        bytes: Buffer.byteLength(raw),
+        savedAt: outer.savedAt || 0,
+        mtime: fs.statSync(p).mtimeMs,
+        notes: parseList(data.notes),
+        archived: parseList(data.archived_notes !== undefined ? data.archived_notes : data.archivedNotes),
+        containerWidth: data.containerWidth,
+        tableReset: data['pastedTableLayoutReset.v1'],
+        taskTableLayout: data['taskTableLayout.v1']
+    };
 }
 
 // ---------------------------------------------------------------- 子命令
@@ -542,6 +617,27 @@ const commands = {
         if (isNaN(id)) fail('缺少任务 id（写法：node timer-cli.js table info 1759000000000）');
         const index = args.index === undefined ? 0 : Number(args.index);
 
+        // 新建一张表插进内容（以前只能改已有的表，AI 想加对比表得自己拼 HTML）
+        if (action === 'add' || action === 'insert' || action === 'new' || action === 'create') {
+            const body = { action: 'insert', at: String(args.at || 'end').toLowerCase() };
+            const head = args.head === undefined ? [] : splitCells(args.head);
+            const data = tableRows([].concat(args.data || []));
+            if (head.length) body.head = head;
+            if (data.length) body.data = data;
+            if (isCount(args.cols)) body.cols = Number(args.cols);
+            else if (args.cols !== undefined) body.colWidths = String(args.cols);
+            if (isCount(args.rows)) body.rows = Number(args.rows);
+            else if (args.rows !== undefined) fail('table add 的 --rows 只能给行数（行高请建完再用 table set --rows 2=60）');
+            if (args.width !== undefined) body.width = String(args.width);
+            if (args['no-header']) body.hasHeader = false;
+            const r = needOk(await call(args, 'POST', '/api/tasks/' + id + '/table', body), '插入表格');
+            console.log('已在任务 #%d %s插入 %d 行 × %d 列%s的表格',
+                id, r.at === 'start' ? '开头' : '末尾', r.rows, r.cols, r.hasHeader ? '（含表头）' : '');
+            const info = needOk(await call(args, 'GET', '/api/tasks/' + id + '/table'), '读取表格');
+            (info.tables || []).forEach((t, i) => printTableInfo(i, t));
+            return;
+        }
+
         if (action === 'info' || action === 'list' || action === 'get' || action === 'show') {
             const r = needOk(await call(args, 'GET', '/api/tasks/' + id + '/table'), '读取表格');
             console.log('任务 #%d 共 %d 张表', id, r.count || 0);
@@ -573,6 +669,162 @@ const commands = {
         console.log('\n提示：表格宽度超过窗口时会被自动贴合显示；想完全交给 CSS 就 table auto %d', id);
     },
 
+    // ---------------------------------------------------------------- 结构化检索（2026-11-12）
+    /**
+     * 现有 list 只有 --keyword，说不出「本周高优未完成、带表格的」这种话。
+     * 过滤在服务端做（GET /api/tasks 的 project/priority/type/done/hasTable/from/to/sort…），
+     * 输出和 list 一致，方便继续 pipe 给 done / delete。
+     */
+    async query(args) {
+        const qs = new URLSearchParams();
+        qs.set('scope', args.scope || 'active');
+        if (args.keyword) qs.set('keyword', args.keyword);
+        if (args.project !== undefined) qs.set('project', String(args.project));
+        if (args.priority !== undefined) qs.set('priority', parsePriority(args.priority));
+        if (args.type !== undefined) qs.set('type', String(args.type));
+        if (args.done) qs.set('done', 'true');
+        if (args.undone) qs.set('done', 'false');
+        if (args['has-table']) qs.set('hasTable', 'true');
+        if (args['no-table']) qs.set('hasTable', 'false');
+        if (args['has-remind']) qs.set('remind', 'pending');
+        if (args['no-remind']) qs.set('remind', 'none');
+        if (args.from !== undefined) qs.set('from', String(args.from));
+        if (args.to !== undefined) qs.set('to', String(args.to));
+        if (args['date-field'] !== undefined) qs.set('dateField', String(args['date-field']));
+        if (args.sort !== undefined) qs.set('sort', String(args.sort));
+        if (args.order !== undefined) qs.set('order', String(args.order));
+        if (args.offset !== undefined) qs.set('offset', String(args.offset));
+        if (args.limit !== undefined) qs.set('limit', String(args.limit));
+
+        const data = needOk(await call(args, 'GET', '/api/tasks?' + qs.toString()), '检索任务');
+        const tasks = data.tasks || [];
+        if (args.count) { console.log(String(data.total === undefined ? tasks.length : data.total)); return; }
+        if (args['only-ids']) { console.log(tasks.map(t => t.id).join(',')); return; }
+        tasks.forEach(t => printTask(t));
+        const total = data.total === undefined ? tasks.length : data.total;
+        console.log('共 %d 条%s', tasks.length, total !== tasks.length ? '（过滤后共 ' + total + ' 条，已截断）' : '');
+    },
+
+    // ---------------------------------------------------------------- 自检（2026-11-12）
+    /**
+     * 一条命令把「排查时每次都要手敲的东西」跑一遍：配置、环境变量、API、数据文件、
+     * 图片目录、界面宽度、版本是否已部署、表格迁移标志。
+     * 只读，不改任何东西。
+     */
+    async doctor(args) {
+        let problems = 0, warns = 0;
+        const ok = (msg, ...a) => console.log('  [ok]   ' + msg, ...a);
+        const warn = (msg, ...a) => { warns++; console.log('  [注意] ' + msg, ...a); };
+        const bad = (msg, ...a) => { problems++; console.log('  [异常] ' + msg, ...a); };
+
+        console.log('配置');
+        const cfg = loadConfig(args);
+        console.log('  文件：%s', cfg.file);
+        console.log('  端口：%d   令牌：%s', cfg.port, cfg.token ? (cfg.requireToken ? '校验开' : '已配置但不校验') : '无');
+        const dataDir = path.dirname(cfg.file);
+        ok('数据目录 ' + dataDir);
+
+        console.log('环境');
+        if (process.env.ELECTRON_RUN_AS_NODE) {
+            warn('ELECTRON_RUN_AS_NODE=' + process.env.ELECTRON_RUN_AS_NODE +
+                ' 已设置 —— 从这种 shell 启动「计时器.exe」会被当成 node 跑（无窗口、exit 0）；' +
+                '用 PowerShell 先清掉再 Start-Process');
+        } else {
+            ok('没有 ELECTRON_RUN_AS_NODE 干扰');
+        }
+        ok('node ' + process.version + ' · ' + process.platform);
+
+        console.log('接口');
+        let health = null;
+        const t0 = Date.now();
+        try {
+            // 这里不能用 call()：它连不上会直接 fail() 退出，doctor 要自己判
+            const headers = {};
+            if (cfg.token && cfg.requireToken) headers['X-Api-Token'] = cfg.token;
+            const res = await fetch('http://127.0.0.1:' + cfg.port + '/api/health', { headers: headers });
+            health = await res.json();
+            if (health && health.ok) {
+                ok('API 在线（' + (Date.now() - t0) + 'ms）· 版本 ' + (health.version || '?') +
+                    ' · 计时' + ((health.timer || {}).isRunning ? '运行中' : '已暂停') +
+                    ' · 悬浮窗' + (health.floatWindowOpen ? '开' : '关'));
+            } else {
+                bad('API 返回异常：' + JSON.stringify(health).slice(0, 200));
+            }
+        } catch (e) {
+            bad('API 连不上（127.0.0.1:' + cfg.port + '）：' + (e.cause && e.cause.code || e.message) +
+                ' —— 应用没开？或设置里「AI 接口」关着？');
+        }
+
+        console.log('版本');
+        let localVersion = '';
+        try {
+            localVersion = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+        } catch (e) { /* 源码目录被挪走就算了 */ }
+        if (localVersion && health && health.version) {
+            if (String(localVersion) === String(health.version)) ok('源码与运行版本一致（' + localVersion + '）');
+            else warn('源码 ' + localVersion + ' ≠ 运行 ' + health.version + ' —— 可能还没部署（scripts/deploy-local.js）');
+        }
+
+        console.log('数据');
+        let ad = null;
+        try {
+            ad = readAppData(dataDir);
+        } catch (e) {
+            bad('app-data.json 解析失败：' + e.message);
+        }
+        if (!ad) {
+            bad('找不到 app-data.json（' + path.join(dataDir, 'app-data.json') + '）');
+        } else {
+            const withTable = ad.notes.concat(ad.archived).filter(n => /<table[\s>]/i.test(String(n.content || ''))).length;
+            ok('任务 %d 条（归档 %d，含表格 %d）· %s · 存于 %s前',
+                ad.notes.length, ad.archived.length, withTable, humanSize(ad.bytes),
+                Math.max(0, Math.round((Date.now() - ad.mtime) / 60000)) + ' 分钟');
+            const bak = path.join(dataDir, 'app-data.backup.json');
+            if (fs.existsSync(bak)) {
+                const st = fs.statSync(bak);
+                ok('备份存在（%s，%s）', humanSize(st.size), fmtTime(st.mtimeMs));
+                if (st.size < ad.bytes * 0.5) warn('备份比当前数据小一半以上，确认一下是不是丢过数据');
+            } else {
+                warn('没有 app-data.backup.json');
+            }
+            if (!ad.tableReset) {
+                warn('历史表格还没有跑过解冻迁移（pastedTableLayoutReset.v1 缺失）——' +
+                    '打开应用会执行一次，坏表会自动恢复自适应');
+            }
+        }
+
+        console.log('界面');
+        if (ad && Number(ad.containerWidth) > 0) {
+            const w = Number(ad.containerWidth);
+            if (w > 1400) warn('containerWidth = ' + w + '，窗口没那么宽时会被压到 100%（超过 1400 可能是手滑设的）');
+            else ok('界面宽度设置 ' + w + 'px');
+        } else {
+            ok('界面宽度：默认');
+        }
+        if (ad && ad.taskTableLayout) {
+            try {
+                const l = typeof ad.taskTableLayout === 'string' ? JSON.parse(ad.taskTableLayout) : ad.taskTableLayout;
+                ok('表格视图自定义列宽 %d 列 / 行高 %d 行',
+                    Object.keys((l || {}).colWidths || {}).length, Object.keys((l || {}).rowHeights || {}).length);
+            } catch (e) { warn('taskTableLayout 解析失败：' + e.message); }
+        }
+
+        console.log('文件');
+        [['NoteImages', '图片'], ['NoteFiles', '附件']].forEach(([name, label]) => {
+            const st = dirStats(path.join(dataDir, name));
+            if (!st) console.log('  [--]   %s 目录不存在（%s）', name, label);
+            else if (st.files > 2000) warn(name + ' ' + st.files + ' 个文件 / ' + humanSize(st.bytes) + '，考虑清理');
+            else ok(name + ' ' + st.files + ' 个文件 / ' + humanSize(st.bytes));
+        });
+
+        console.log('');
+        if (problems) {
+            console.log('结论：%d 项异常，%d 项需注意', problems, warns);
+            process.exit(1);
+        }
+        console.log(warns ? '结论：可用，有 ' + warns + ' 项需注意' : '结论：一切正常');
+    },
+
     async schema(args) {
         const data = needOk(await call(args, 'GET', '/api/schema'), '读取接口说明');
         console.log('基地址：http://127.0.0.1:%d', loadConfig(args).port);
@@ -600,6 +852,13 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
                                   添加任务
   list [--scope active|archive|all] [--keyword 词] [--limit n]
                                   列出任务
+  query [--project 项目] [-p 级别] [-t 类型] [--done|--undone]
+        [--has-table|--no-table] [--has-remind|--no-remind] [--keyword 词]
+        [--from 日期] [--to 日期] [--date-field created|remind]
+        [--sort created|priority|remind|len] [--order asc|desc]
+        [--limit n] [--offset n] [--scope …] [--count] [--only-ids]
+                                  结构化检索（例：本周高优未完成带表格的）
+                                  --count 只输出条数；--only-ids 只输出 id 列表（喂给 done/delete）
   get <id>                        查看单条详情（含评论与图片）
   update <id> [--content 文本] [--append 文本] [-p 级别] [-t 类型] [--project 项目]
          [--remind 时间] [--image 路径或链接]...
@@ -620,9 +879,17 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
                                       --record-ids-file 回填.json --json-file 配置片段.json）
                                   parse 只解析示例 JSON（--schema-file / --schema-json）
                                   test 发一条测试记录到表格
-  table <info|set|auto|view> [任务id] [参数]
-                                  内容表格的尺寸：
+  table <info|add|set|auto|view> [任务id] [参数]
+                                  内容表格的尺寸 / 新增表格：
                                     info <id>                    看每张表的行数/列数/列宽/行高
+                                    add  <id>                    往内容里插一张表
+                                             --head "渠道,账号"   表头（省略则无表头）
+                                             --data "oppo|cat;vivo|cat2"  行数据（; 分行 | 分列）
+                                             --cols 4            列数（纯数字）或列宽 120,*,240
+                                             --rows 3            行数（只用于空表）
+                                             --at end|start      插在末尾 / 开头
+                                             --width 900         顺便定宽
+                                             [--no-header]       不要表头
                                     set  <id> --width 900        整表宽度（900 / 900px / 80%）
                                              --cols 120,240,*    逐列像素宽（* = 自动）
                                              --rows 2=60,3=80    行高（行号从 1 开始）
@@ -632,6 +899,8 @@ const HELP = `专注计时器命令行工具（供 AI / 脚本直接操控）
                                     view                         看列宽 / 行高
                                     view --col 3=200 --row <noteId>=80   设置
                                     view --reset                 恢复默认
+  doctor                          一条命令自检：配置 / 环境 / API / 数据文件 /
+                                  图片目录 / 界面宽度 / 版本是否已部署
   settings [key] [value]          读写应用设置
   schema                          打印 HTTP API 自描述
 
@@ -651,11 +920,16 @@ function parseArgs(argv) {
         // 【2026-09-30】webhook 配置相关
         '--schema-json', '--schema-file', '--json-file', '--record-ids-file',
         // 【2026-11-12】表格尺寸相关
-        '--index', '--width', '--cols', '--rows']);
+        '--index', '--width', '--cols', '--rows',
+        // 【2026-11-12 CR-038】新建表格 / 结构化检索
+        '--head', '--at', '--from', '--to', '--sort', '--order', '--offset', '--date-field']);
     // 可重复的选项：--map fA=content --map fB=priority / --const fA=拯救小猫
-    //             --col 3=200（表格视图列宽）/ --row 2=60（行高）
-    const optionRepeats = new Set(['--image', '--map', '--const', '--col', '--row']);
-    const optionFlags = new Set(['--json', '--undone', '--top', '--all', '--enable', '--disable', '--force', '--reset']);
+    //             --col 3=200（表格视图列宽）/ --row 2=60（行高）/ --data 'a|b'
+    const optionRepeats = new Set(['--image', '--map', '--const', '--col', '--row', '--data']);
+    const optionFlags = new Set(['--json', '--undone', '--top', '--all', '--enable', '--disable', '--force', '--reset',
+        // 【2026-11-12 CR-038】query 的过滤开关 / 输出开关
+        '--done', '--has-table', '--no-table', '--has-remind', '--no-remind',
+        '--count', '--only-ids', '--no-header']);
     const aliases = { '-p': 'priority', '-t': 'type', '-m': 'minutes', '-s': 'seconds' };
 
     for (let i = 0; i < argv.length; i++) {
@@ -704,7 +978,7 @@ async function main() {
     names.forEach((name, i) => {
         if (args._[i] !== undefined && args[name] === undefined) args[name] = args._[i];
     });
-    ['id', 'minutes', 'seconds', 'limit'].forEach(k => {
+    ['id', 'minutes', 'seconds', 'limit', 'offset'].forEach(k => {
         if (args[k] !== undefined && typeof args[k] === 'string' && /^\d+$/.test(args[k])) args[k] = Number(args[k]);
     });
     await fn(args);

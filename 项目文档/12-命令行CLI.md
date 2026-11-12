@@ -37,6 +37,12 @@ status                            查看应用与计时器状态
 add <内容> [-p high|medium|low] [-t short|long] [--remind 时间]
     [--image 路径或链接]... [--base64 dataURL] [--comment 文本] [--top]
 list [--scope active|archive|all] [--keyword 词] [--limit n]
+query [--project 项目] [-p 级别] [-t 类型] [--done|--undone]
+      [--has-table|--no-table] [--has-remind|--no-remind] [--keyword 词]
+      [--from 日期] [--to 日期] [--date-field created|remind]
+      [--sort created|priority|remind|len] [--order asc|desc]
+      [--limit n] [--offset n] [--scope …] [--count] [--only-ids]
+                                  结构化检索；--count 只输出条数，--only-ids 只输出 id
 get <id>                          单条详情（含评论与图片）
 update <id> [--content 文本] [--append 文本] [-p 级别] [-t 类型]
        [--remind 时间] [--image 路径或链接]...
@@ -59,6 +65,19 @@ webhook <info|config|push|set|parse|test>
     parse --schema-file 示例JSON   只解析示例 JSON，不保存
     test                          发一条测试记录到表格
 settings [key] [value]            读写应用设置
+table <info|add|set|auto|view> [id] [参数]
+    info <id>                     看每张表的行数 / 列数 / 列宽 / 行高 / 是否冻结
+    add  <id> [--head "渠道,账号"] [--data "oppo|cat;vivo|cat2"]
+              [--cols 4 | --cols 120,*,240] [--rows 3] [--at end|start]
+              [--width 900] [--no-header]
+                                  往任务内容里插一张表（表头可省，行内用 | 分列、; 分行）
+    set  <id> --width 900 --cols 120,240,* --rows 2=60 [--index 0]
+                                  改已有表格的尺寸（写内联 style，随内容持久化）
+    auto <id>                     解冻，交还 CSS 自适应
+    view [--col 3=200 --row <noteId>=80 | --reset]
+                                  任务表格视图（列表那种）的列宽 / 行高
+doctor                            一条命令自检：配置 / 环境变量 / API / 版本是否已部署 /
+                                  数据文件与备份 / 界面宽度 / 图片目录占用
 schema                            打印 HTTP API 自描述
 ```
 
@@ -94,6 +113,19 @@ node timer-cli.js clipboard set --path shot.png
 
 # 把当前全部任务手动推一遍表格
 node timer-cli.js webhook push --all
+
+# 结构化检索：本周高优未完成、带表格的，按优先级排
+node timer-cli.js query -p high --undone --has-table --from 2026-11-10 --sort priority
+
+# 只拿 id，直接喂给批量操作
+node timer-cli.js done $(node timer-cli.js query --project 拯救小猫 --undone --only-ids)
+
+# 给任务插一张对比表，顺手定宽
+node timer-cli.js table add 1794477779044 \
+    --head "渠道,账号,状态" --data "oppo|cat|已接入;vivo|cat2|待测" --width 760
+
+# 排查：配置对不对、API 在不在、跑的是不是刚部署的版本
+node timer-cli.js doctor
 ```
 
 提醒时间支持：`2026-09-29 18:00`、`09-29 18:00`、`18:00`（今天）、毫秒时间戳。

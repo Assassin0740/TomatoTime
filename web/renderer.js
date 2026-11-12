@@ -6802,8 +6802,50 @@
                             holder.className = 'note-content-editable';
                             holder.innerHTML = found.note.content || '';
                             const tables = Array.prototype.slice.call(holder.querySelectorAll('table'));
-                            if (!tables.length) { reply(false, null, '这条任务里没有表格'); break; }
                             const action = String(p.action || 'info').toLowerCase();
+
+                            /*
+                             * 新建一张表格插进任务内容（CR-038）。
+                             * 以前只能改「已有的表」，AI 想给任务加一张 3×4 的对比表得自己拼
+                             * <table> 的 HTML 再走 PATCH —— 拼错了就出脏表。现在由 TableResize
+                             * 统一造 HTML，和粘贴出来的结构一致（.pasted-table-wrap > table.pasted-table），
+                             * 已有的列宽 / 图片自适应 / 导出逻辑全都认。
+                             * 必须在「没有表格就报错」之前处理 —— 插入场景本来就没有表。
+                             */
+                            if (action === 'insert' || action === 'add' || action === 'new' || action === 'create') {
+                                const built = TableResize.buildTableHtml({
+                                    head: p.head, data: p.data, cols: p.cols, rows: p.rows,
+                                    hasHeader: p.hasHeader
+                                });
+                                const at = String(p.at === undefined || p.at === '' ? 'end' : p.at).toLowerCase();
+                                if (!['end', 'bottom', 'start', 'top'].includes(at)) {
+                                    reply(false, null, '插入位置只支持 end / start，收到：' + p.at);
+                                    break;
+                                }
+                                const oldHtml = holder.innerHTML;
+                                holder.innerHTML = (at === 'start' || at === 'top')
+                                    ? built.html + oldHtml
+                                    : oldHtml + built.html;
+                                // 顺便给新表定尺寸（width / colWidths），复用同一套冻结逻辑
+                                if (p.width !== undefined || p.colWidths !== undefined) {
+                                    const all = holder.querySelectorAll('table');
+                                    const fresh = all[all.length - 1];
+                                    if (fresh) TableResize.applyTableOps(fresh, { width: p.width, cols: p.colWidths });
+                                }
+                                found.note.content = holder.innerHTML;
+                                if (found.archived) saveArchive(); else save();
+                                render();
+                                reply(true, {
+                                    id: found.note.id, action: 'insert', at: at === 'start' || at === 'top' ? 'start' : 'end',
+                                    rows: built.rows, cols: built.cols, hasHeader: built.hasHeader,
+                                    count: tables.length + 1,
+                                    tables: Array.prototype.slice.call(holder.querySelectorAll('table'))
+                                        .map(t => TableResize.describeTable(t))
+                                });
+                                break;
+                            }
+
+                            if (!tables.length) { reply(false, null, '这条任务里没有表格'); break; }
                             const result = { id: found.note.id, action: action, count: tables.length };
 
                             if (action === 'info' || action === 'list' || action === 'get') {

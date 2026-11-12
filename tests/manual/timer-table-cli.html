@@ -105,6 +105,27 @@ window.__probe = (function () {
     try { T.applyTableOps(tbl, { rows: [{ row: 99, height: 60 }] }); } catch (e) { errRow = e.message; }
     C.errorOnBadRow = errRow.indexOf('行号超出范围') !== -1;
 
+    // 11) table add：造出来的表插进内容后能真实渲染，宽度/列宽照样生效
+    const addHost = document.createElement('div');
+    addHost.className = 'note-content-editable';
+    addHost.style.width = '1000px';
+    document.body.appendChild(addHost);
+    const built = T.buildTableHtml({
+        head: ['渠道', '账号', '密码'],
+        data: [['oppo', 'cat', '123'], ['vivo']]
+    });
+    addHost.innerHTML = '<p>前</p>' + built.html + '<p>后</p>';
+    const newTable = addHost.querySelector('table');
+    const nr = newTable.getBoundingClientRect();
+    out.diag.insertRect = { rows: newTable.rows.length, cols: newTable.rows[0].children.length, width: Math.round(nr.width) };
+    C.insertRendered = newTable.rows.length === 3 && newTable.rows[0].children.length === 3;
+    C.insertHeaderCells = newTable.rows[0].children[0].tagName === 'TH';
+    C.insertShortRowPadded = newTable.rows[2].children.length === 3 && newTable.rows[2].children[1].textContent === '';
+    C.insertNotOverflow = nr.right <= addHost.getBoundingClientRect().right + 1;
+    T.applyTableOps(newTable, { width: '600' });
+    C.insertWidthApplied = Math.round(newTable.getBoundingClientRect().width) === 600;
+    C.insertOrder = addHost.children[0].textContent === '前' && addHost.children[2].textContent === '后';
+
     out.pass = Object.keys(C).every(k => C[k] === true);
     out.failed = Object.keys(C).filter(k => C[k] !== true);
     return out;

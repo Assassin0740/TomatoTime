@@ -265,6 +265,82 @@ test('关键词搜索与 scope 过滤', withServer(async () => {
     assert.strictEqual(all.json.count, 2);
 }));
 
+test('结构化检索：project / priority / done / hasTable / remind', withServer(async (api, notes) => {
+    const mk = (id, extra) => Object.assign({
+        id: id, ts: id, content: 'x', p: 1, type: 'short', done: false, comments: []
+    }, extra || {});
+    notes.push(
+        mk(1790000000000, { content: '带表 <table><tr><td>a</td></tr></table>', project: '拯救小猫', p: 3 }),
+        mk(1790000001000, { content: '普通', project: '拯救小猫', p: 1 }),
+        mk(1790000002000, { content: '已完成的高优', project: 'Mine', p: 3, done: true }),
+        mk(1790000003000, { content: '无项目带提醒', p: 2, remindAt: 1790009999000 })
+    );
+
+    const byProject = await request('GET', '/api/tasks?project=拯救小猫', undefined, auth);
+    assert.strictEqual(byProject.json.count, 2);
+
+    const noProject = await request('GET', '/api/tasks?project=-', undefined, auth);
+    assert.strictEqual(noProject.json.count, 1);
+
+    const high = await request('GET', '/api/tasks?priority=high', undefined, auth);
+    assert.strictEqual(high.json.count, 2, 'high 应匹配 p=3 的两条');
+
+    const undone = await request('GET', '/api/tasks?done=false', undefined, auth);
+    assert.strictEqual(undone.json.count, 3);
+
+    const withTable = await request('GET', '/api/tasks?hasTable=true', undefined, auth);
+    assert.strictEqual(withTable.json.count, 1);
+    assert.ok(withTable.json.tasks[0].content.indexOf('<table') !== -1);
+
+    const pending = await request('GET', '/api/tasks?remind=pending', undefined, auth);
+    assert.strictEqual(pending.json.count, 1);
+}));
+
+test('结构化检索：时间区间 / 排序 / 分页 / total / 评论也能搜到', withServer(async (api, notes) => {
+    const day = (d, h) => new Date(2026, 10, d, h, 0, 0).getTime();
+    const mk = (id, extra) => Object.assign({
+        id: id, ts: id, content: 'x', p: 1, type: 'short', done: false, comments: []
+    }, extra || {});
+    notes.push(
+        mk(day(1, 9), { p: 1 }),
+        mk(day(2, 9), { p: 3 }),
+        mk(day(2, 15), { p: 2, comments: [{ text: '记在评论里的结论', time: 1 }] }),
+        mk(day(3, 9), { p: 3, remindAt: day(5, 10) })
+    );
+
+    // 只给日期时，from 取当天 00:00、to 取当天 23:59:59
+    const today = await request('GET', '/api/tasks?from=2026-11-02&to=2026-11-02', undefined, auth);
+    assert.strictEqual(today.json.count, 2);
+    assert.strictEqual(today.json.total, 2);
+
+    const byRemind = await request('GET', '/api/tasks?from=2026-11-05&dateField=remind', undefined, auth);
+    assert.strictEqual(byRemind.json.count, 1);
+
+    const sorted = await request('GET', '/api/tasks?sort=priority&order=desc', undefined, auth);
+    assert.strictEqual(sorted.json.tasks[0].p, 3, '按优先级降序第一条应是 p=3');
+
+    const paged = await request('GET', '/api/tasks?sort=created&order=asc&limit=2&offset=2', undefined, auth);
+    assert.strictEqual(paged.json.total, 4);
+    assert.strictEqual(paged.json.count, 2);
+    assert.strictEqual(paged.json.tasks[0].id, day(2, 15));
+
+    const inComment = await request('GET', '/api/tasks?keyword=评论里的结论', undefined, auth);
+    assert.strictEqual(inComment.json.count, 1, '评论内容应该能被搜到');
+}));
+
+test('内容表格：action=insert 的参数原样透传到渲染进程', withServer(async () => {
+    const res = await request('POST', '/api/tasks/123/table', {
+        action: 'insert',
+        head: ['渠道', '账号'],
+        data: [['oppo', 'cat']],
+        at: 'start'
+    }, auth);
+    assert.strictEqual(res.json.ok, true);
+    assert.strictEqual(res.json.echo.action, 'insert');
+    assert.deepStrictEqual(res.json.echo.head, ['渠道', '账号']);
+    assert.strictEqual(res.json.echo.at, 'start');
+}));
+
 test('计时器控制与接口自描述可用', withServer(async () => {
     const t = await request('POST', '/api/timer', { action: 'set', minutes: 5, seconds: 0 }, auth);
     assert.strictEqual(t.json.ok, true);

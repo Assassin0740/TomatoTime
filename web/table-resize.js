@@ -353,6 +353,57 @@
     //   那里没有布局，getBoundingClientRect / getComputedStyle 全是 0 ——
     //   所以写入时必须由调用方给出显式列宽（freezeWithWidths），不能依赖测量。
 
+    /** 表格单元格文本转义（只转义会破坏 DOM 结构的字符，&#10; 留给换行） */
+    function escapeCell(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>');
+    }
+
+    /**
+     * 造一张能直接塞进笔记内容的表格 HTML。
+     * 【为什么放这儿】renderer 里手拼字符串容易被单测漏掉，放模块里可以离屏验证：
+     *   给 { head:['渠道','账号'], data:[['oppo','cat']] } 必须得到
+     *   <div class="pasted-table-wrap"><table class="pasted-table" data-rows data-cols>…
+     *   —— 和「从 Excel / 腾讯文档粘贴」出来的结构完全一致，
+     *   这样已有的列宽逻辑、图片自适应、导出逻辑都不用改。
+     *
+     * spec = { head:[…], data:[[…]], cols:4, rows:3 }
+     *   · 列数取 head / 各行 / spec.cols 的最大值，短行补空单元格（表格必须是矩形）
+     *   · 没有任何 head/data 时，用 cols × rows 造空格子（默认 3×3）
+     *   · 返回 { html, rows, cols, hasHeader }
+     */
+    function buildTableHtml(spec) {
+        const s = spec || {};
+        const head = Array.isArray(s.head) ? s.head.map(x => String(x === null || x === undefined ? '' : x)) : [];
+        const data = (Array.isArray(s.data) ? s.data : []).map(r => Array.isArray(r) ? r.slice() : [r]);
+        const hasHeader = !!(s.hasHeader !== false && head.length);
+
+        let cols = Math.max(head.length, Number(s.cols) || 0);
+        data.forEach(r => { cols = Math.max(cols, r.length); });
+        if (!cols) cols = 3;
+        let rowCount = data.length + (hasHeader ? 1 : 0);
+        if (!rowCount) rowCount = Math.max(1, Number(s.rows) || 3);
+
+        const pad = arr => {
+            const out = arr.slice(0, cols);
+            while (out.length < cols) out.push('');
+            return out;
+        };
+
+        let thead = '';
+        if (hasHeader) {
+            thead = '<thead><tr>' + pad(head).map(c => '<th>' + escapeCell(c) + '</th>').join('') + '</tr></thead>';
+        }
+        const bodyRows = data.length ? data.map(pad) : Array.from({ length: rowCount - (hasHeader ? 1 : 0) }, () => new Array(cols).fill(''));
+        const tbody = '<tbody>' + bodyRows.map(r =>
+            '<tr>' + pad(r).map(c => '<td>' + escapeCell(c) + '</td>').join('') + '</tr>').join('') + '</tbody>';
+
+        const html = '<div class="pasted-table-wrap"><table class="pasted-table" data-rows="' +
+            (rowCount) + '" data-cols="' + cols + '">' + thead + tbody + '</table></div>';
+        return { html: html, rows: rowCount, cols: cols, hasHeader: hasHeader };
+    }
+
     /** '900' / '900px' / '80%' → {kind:'px'|'pct', value}；非法返回 null */
     function parseSize(input) {
         if (input === undefined || input === null || input === '') return null;
@@ -768,6 +819,7 @@
         freezeWithWidths: freezeWithWidths,
         setTableWidthPercent: setTableWidthPercent,
         applyTableOps: applyTableOps,
+        buildTableHtml: buildTableHtml,
         loadTaskLayout: loadLayout,
         saveTaskLayout: saveLayout,
         MIN_COL: MIN_COL,
