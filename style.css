@@ -1464,11 +1464,23 @@
 
         .task-table {
             width: 100%;
+            /* 【2026-11-16】加整表下限：原来只有 width:100%，窗口变窄时浏览器唯一能让步的
+               就是「任务内容」列，那几列写了固定 px 的（时间 85 / 状态 100 / 项目 110 /
+               截止 95 / 操作列）都不动，结果内容列被压到几乎不可读。
+               给整表一个下限后，窄于此值由 .table-view-container 横向滚动兜住 ——
+               这正是它 overflow-x:auto 原本的设计意图，只是缺了这个下限才一直没触发。 */
+            min-width: 1020px;
             border-collapse: collapse;
             background: rgba(25, 25, 25, 0.93);
             border-radius: 12px;
             overflow: hidden;
             transform: translateZ(0); /* 强开 GPU 合成，表格滚动彻底顺滑 */
+        }
+
+        /* 任务内容列：整表下限之外再单独兜一层，避免被同行的高列挤扁 */
+        .task-table th:nth-child(1),
+        .task-table td:nth-child(1) {
+            min-width: 280px;
         }
 
         .task-table th,
@@ -2783,14 +2795,38 @@
             scrollbar-width: thin;
         }
 
+        /* 【2026-11-16】横向滚动条要看得见。
+           表格现在可以比容器宽（可读性优先），但如果滚动条细到看不见，
+           用户看到的就是「右边被切掉了」—— 和真溢出是同一种观感。
+           深色主题下给一条明确的滑轨 + 滑块。 */
+        .note-content-editable .pasted-table-wrap::-webkit-scrollbar,
+        .table-content .pasted-table-wrap::-webkit-scrollbar {
+            height: 10px;
+        }
+        .note-content-editable .pasted-table-wrap::-webkit-scrollbar-track,
+        .table-content .pasted-table-wrap::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 5px;
+        }
+        .note-content-editable .pasted-table-wrap::-webkit-scrollbar-thumb,
+        .table-content .pasted-table-wrap::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.30);
+            border-radius: 5px;
+        }
+        .note-content-editable .pasted-table-wrap::-webkit-scrollbar-thumb:hover,
+        .table-content .pasted-table-wrap::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.48);
+        }
+
         .pasted-table {
             border-collapse: collapse;
             width: auto;
             min-width: 100%;
-            /* 【2026-11-12】永远不许顶出容器右边界：手动拖过列宽的表格会记住像素宽度，
-               窗口变窄/拖太宽时会溢出到屏幕外、连滚动条都看不见。max-width 兜住，
-               拖拽仍按列宽比例生效（table-layout:fixed 下列宽是比例份额）。 */
-            max-width: 100%;
+            /* 【2026-11-16】这里原来有 max-width: 100%，本意是防顶出右边界，
+               但它把表格钉死在容器宽 —— 12 列的长表只能均分到每列 74px，
+               2000 字的单元格竖成一列字。真正防溢出的是外层 .pasted-table-wrap
+               的 overflow-x:auto：表格可以比容器宽，用户横向滚着看，
+               页面本身永远不会被撑出窗口（实测表格 206859px 时页面仍无横向溢出）。 */
             font-size: 13px;
             line-height: 1.45;
             color: #eee;
@@ -2804,6 +2840,15 @@
             text-align: left;
             vertical-align: top;
             word-break: break-word;
+        }
+
+        /* 【2026-11-16】列太多、均分也塞不下一个字行的表格（典型：从后台复制的
+           12 列参数表，每格 2000 字）。这时把每列抬到可读下限，整表比容器宽、
+           由外层 wrap 横向滚动 —— 好过每列 40px 把字竖成一列。
+           标记由 table-resize.js 的 markReadableFloor() 打，判据只看「容器宽÷列数」。 */
+        .pasted-table[data-rsz-squeezed] th,
+        .pasted-table[data-rsz-squeezed] td {
+            min-width: 110px;
         }
 
         .pasted-table th {

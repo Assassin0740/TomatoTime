@@ -98,6 +98,13 @@ const EXPR = `(async () => {
     const wAfter = th.getBoundingClientRect().width;
     const thCells = [th, ...table.querySelectorAll('tbody tr td:first-child')];
     C.colDrag = {
+        wBefore: Math.round(wBefore),
+        wAfter: Math.round(wAfter),
+        delta: Math.round(wAfter - wBefore),
+        th2Before: Math.round(w2Before),
+        th2After: Math.round(th2.getBoundingClientRect().width),
+        tableW: Math.round(table.getBoundingClientRect().width),
+        tableLayout: getComputedStyle(table).tableLayout,
         widthChanged: Math.abs(wAfter - (wBefore + 90)) < 6,
         allCellsTagged: thCells.every(c => c.style.width && c.style.width.endsWith('px')),
         saved: (() => { try { return JSON.parse(localStorage.getItem('taskTableLayout.v1') || '{}'); } catch (e) { return {}; } })()

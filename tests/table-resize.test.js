@@ -77,9 +77,9 @@ test('web/table-resize.js 与主版本完全一致', () => {
     assert.strictEqual(read('table-resize.js'), read('web/table-resize.js'));
 });
 
-test('sw.js：版本升到 v2.3.4 且预缓存清单含 table-resize.js', () => {
+test('sw.js：版本升到 v2.3.5 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.4';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.5';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 
@@ -333,5 +333,99 @@ test('计时器.html 引用的本地脚本全部在 electron-builder files 白�
     srcs.forEach(src => {
         assert.ok(whitelist.includes('"' + src + '"'),
             '计时器.html 引用了 ' + src + '，但 package.json build.files 白名单里没有它 —— asar 打包会 404');
+    });
+});
+
+/**
+ * 【2026-11-16】「宽度还是有问题」真凶：缩放的破坏性。
+ *
+ * 一张 12 列的表因为某列装了 16000px 宽的 Base64，整表 18250px。
+ * fitTableToWidth 为了「塞进容器」，按比例一路扣到 MIN_COL=40 ——
+ * 结果是 11 列 40px + 1 列 444px，2000 字的单元格竖成一列字。
+ * 修法是给缩放加可读下限，宁可让表格比容器宽、交给外层横向滚动。
+ */
+test('自动缩放有可读下限，不再把列压到竖排', () => {
+    const src = read('table-resize.js');
+    assert.ok(/const MIN_READABLE = \d+/.test(src), '缺少 MIN_READABLE 常量');
+    assert.ok(/Math\.max\(Math\.min\(w, floor\)/.test(src),
+        'fitTableToWidth 的下限没有用「min(原宽, 可读宽度)」');
+    // 下限按列数分档：少于 8 列用 MIN_COL，否则 5×110 会把窄容器顶出滚动条
+    assert.ok(/current\.length >= 8 \? MIN_READABLE : MIN_COL/.test(src),
+        '下限没有按列数分档');
+    assert.ok(src.includes('MIN_READABLE: MIN_READABLE'), 'MIN_READABLE 没有导出（迁移要用）');
+    // 老版本那句「无条件扣到 avail 以内」必须删掉，否则等于没修
+    assert.ok(!/while \(sum > avail\) \{\s*const i = widths\.indexOf/.test(
+        src.slice(0, src.indexOf('function fitTableToWidth') + 4000).replace(/\s+/g, ' ')
+            .replace(/if \(sum > avail && sum - avail <= widths\.length\) \{ /, '')
+    ) || src.includes('if (sum > avail && sum - avail <= widths.length)'),
+        '仍然存在无条件把总和扣到容器宽的收尾逻辑');
+});
+
+test('被压坏的冻结表会被解冻并标记可读下限', () => {
+    const src = read('table-resize.js');
+    assert.ok(src.includes('function isSqueezedFrozen'), '缺少 isSqueezedFrozen');
+    assert.ok(src.includes('function markReadableFloor'), '缺少 markReadableFloor');
+    assert.ok(/if \(isSqueezedFrozen\(table\)\) \{[\s\S]{0,200}unfreezeTableLayout\(table\)/.test(src),
+        'fitAllFrozenTables 没有对压坏的表解冻');
+    // 判据必须只看「容器宽 ÷ 列数」，否则加标记→变宽→撤标记会抖
+    assert.ok(src.includes('avail / cols < MIN_READABLE'), 'markReadableFloor 判据不是容器宽÷列数');
+    assert.ok(src.includes("setAttribute('data-rsz-squeezed', '1')"), '没有打 squeezed 标记');
+});
+
+test('两版 CSS 都给 squeezed 表格可读下限，且不再用 max-width 钉死表格', () => {
+    ['style.css', 'web/style.css'].forEach(f => {
+        const css = read(f);
+        assert.ok(css.includes('data-rsz-squeezed'), f + ' 缺少 data-rsz-squeezed 规则');
+        // 先剥掉注释，否则「这里原来有 max-width:100%」这句说明会被当成规则本身
+        const noComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
+        const start = noComment.indexOf('.pasted-table {');
+        assert.ok(start !== -1, f + ' 找不到 .pasted-table 规则');
+        const block = noComment.slice(start, noComment.indexOf('}', start) + 1);
+        assert.ok(!/max-width:\s*100%/.test(block),
+            f + ' 的 .pasted-table 仍有 max-width:100% —— 会把表格钉死在容器宽，12 列只能均分');
+    });
+});
+
+test('renderer 有 v2 迁移：只解冻被压坏的表，不误伤健康冻结表', () => {
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(src.includes('pastedTableLayoutReset.v2'), f + ' 缺少 v2 迁移标志');
+        assert.ok(src.includes('migrateSqueezedTables'), f + ' 缺少 migrateSqueezedTables');
+        // 判据必须基于内联 width（离屏 DOM 量不到布局）
+        assert.ok(/parseFloat\(cell\.style && cell\.style\.width\)/.test(src),
+            f + ' v2 迁移没有用内联 width 判断');
+        assert.ok(src.includes('narrow <= widths.length / 3'), f + ' v2 迁移阈值不是 1/3');
+    });
+});
+
+test('Markdown 管道表会渲染成 .pasted-table（复用列宽拖拽与横向滚动）', () => {
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const src = read(f);
+        assert.ok(src.includes('function mdTableHtml'), f + ' 缺少 mdTableHtml');
+        assert.ok(src.includes('mdTableHtml(html)'), f + ' mdEnhanceHtml 没有调用 mdTableHtml');
+        assert.ok(src.includes('pasted-table-wrap"><table class="pasted-table"'),
+            f + ' Markdown 表格没有复用 .pasted-table 结构');
+    });
+});
+
+/**
+ * 【2026-11-16】CLI 明确设过的尺寸不能被自动修复吃掉。
+ * `table set --cols 60,60,60,60` 是用户要的 4 列 60px，但如果自动解冻
+ * 把它当「被压坏的表」处理，命令执行了却看不到效果 —— 最难查的那类 bug。
+ */
+test('命令行设置过的表格打 manual 标记，自动修复绕开它', () => {
+    const src = read('table-resize.js');
+    assert.ok(src.includes("setAttribute('data-rsz-manual', '1')"), 'freezeWithWidths 没有打 manual 标记');
+    const fit = src.slice(src.indexOf('function fitTableToWidth'));
+    assert.ok(fit.slice(0, 600).includes("getAttribute('data-rsz-manual')"),
+        'fitTableToWidth 没有跳过 manual 表');
+    const sq = src.slice(src.indexOf('function isSqueezedFrozen'));
+    assert.ok(sq.slice(0, 500).includes("getAttribute('data-rsz-manual')"),
+        'isSqueezedFrozen 没有跳过 manual 表');
+    ['renderer.js', 'web/renderer.js'].forEach(f => {
+        const r = read(f);
+        const seg = r.slice(r.indexOf('migrateSqueezedTables'));
+        assert.ok(seg.slice(0, 1200).includes("getAttribute('data-rsz-manual')"),
+            f + ' 的 v2 迁移没有跳过 manual 表');
     });
 });

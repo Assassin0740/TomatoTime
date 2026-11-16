@@ -1371,11 +1371,75 @@
         }
 
         /**
+         * 【2026-11-16】Markdown 表格渲染。
+         * 起因：mdBlockHtml 只认标题 / 列表 / 引用 / 分隔线，没有表格分支，所以任务里写的
+         *   | 渠道 | 卡点 | 性质 |
+         *   |---|---|---|
+         *   | 荣耀 | appId is empty | 后台 |
+         * 会原样显示成一条管道符长龙 —— 用户看到的就是「表格宽度乱了」。
+         * 这里在 markdown 增强之前，把连续的管道行整体转成真表格，并复用 .pasted-table
+         * 结构：列宽拖拽（table-resize.js）、横向滚动、导出全部直接生效，不用另造一套。
+         *
+         * 只处理「连续 ≥2 行、每行首尾都是竖线」的块，正文里零散的 a | b 不动。
+         * 行分隔符支持 <br> 与真实换行（任务内容两种都存在）。
+         */
+        function mdTableHtml(text) {
+            if (typeof text !== 'string' || text.indexOf('|') === -1) return text;
+            const LINE = /^[ \t]*\|.*\|[ \t]*$/;
+            const SEP = /^[ \t]*\|[ \t:|-]+\|[ \t]*$/;
+            const isSep = s => SEP.test(s) && s.indexOf('-') !== -1;
+            const isBreak = s => /^(?:<br\s*\/?>|\r?\n)$/i.test(s);
+
+            const cellsOf = line => {
+                let s = line.trim();
+                if (s.charAt(0) === '|') s = s.slice(1);
+                if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+                return s.split('|').map(x => x.trim());
+            };
+
+            const build = rows => {
+                const BODY = rows.filter(r => !isSep(r));
+                let headRow = null;
+                if (rows.length >= 2 && isSep(rows[1])) headRow = rows[0];
+                const bodyRows = headRow ? BODY.slice(1) : BODY;
+                // 单元格里常见 **粗体** 和 `代码`，复用既有行内渲染，避免露出星号
+                const cell = (c, tag) => '<' + tag + '>' + mdInline(escapeHtml(c)) + '</' + tag + '>';
+                let html = '<div class="pasted-table-wrap"><table class="pasted-table">';
+                if (headRow) {
+                    html += '<thead><tr>' + cellsOf(headRow).map(c => cell(c, 'th')).join('') + '</tr></thead>';
+                }
+                html += '<tbody>' + bodyRows.map(r =>
+                    '<tr>' + cellsOf(r).map(c => cell(c, 'td')).join('') + '</tr>').join('') + '</tbody>';
+                return html + '</table></div>';
+            };
+
+            const parts = text.split(/(<br\s*\/?>|\r?\n)/i);
+            const out = [];
+            let i = 0;
+            while (i < parts.length) {
+                if (!LINE.test(parts[i])) { out.push(parts[i]); i++; continue; }
+                const rows = [];
+                let last = i;
+                let k = i;
+                while (k < parts.length) {
+                    if (LINE.test(parts[k])) { rows.push(parts[k]); last = k; k++; }
+                    else if (isBreak(parts[k])) { k++; }
+                    else break;
+                }
+                if (rows.length >= 2) { out.push(build(rows)); i = last + 1; }
+                else { out.push(parts[i]); i++; }
+            }
+            return out.join('');
+        }
+
+        /**
          * 把 contenteditable 存下来的 HTML 里的纯文字按 markdown 增强。
          * 只改文本节点，不碰已有标签；没有标记符时原样返回（开销可忽略）。
          */
         function mdEnhanceHtml(html) {
             if (typeof html !== 'string' || !html) return html;
+            // 表格先整体转换：它是块级结构，不能交给后面的文本节点遍历
+            html = mdTableHtml(html);
             if (!/[#>*_~`+-]|\d[.)][ \t]|<h[1-6][\s>]|<a[\s>]/i.test(html)) return html;
             let tpl;
             try {
@@ -7584,6 +7648,81 @@
             else { try { localStorage.setItem('notes', JSON.stringify(notes)); } catch (e) {} }
             try { localStorage.setItem(FLAG, '1'); } catch (e) {}
             if (changed) console.log('[table] 已解冻历史表格 ' + changed + ' 处');
+        })();
+
+        /**
+         * 【2026-11-16】第二次表格布局清洗：只治「已经被压坏」的冻结表。
+         *
+         * 第一次（v1）是无脑全量解冻。之后用户重新拖过列，又可能被超长内容带偏：
+         * 一列装了 16000px 宽的 Base64，整表被撑到 18250px；再按比例压回容器，
+         * 12 列里 11 列只剩 40px —— 2000 字的单元格竖成一列字，比溢出更难读。
+         *
+         * 这类记录的原始比例在第一次压缩时就永久丢了，反复 fit 只会在坏值上来回打转，
+         * 所以只能解冻交还 auto 布局，再靠 CSS 的可读下限让整表横向滚动。
+         *
+         * 判据用**内联 width**，因为离屏 DOM 没有布局，getBoundingClientRect 全是 0。
+         * 超过 1/3 的列窄于 MIN_READABLE 即视为坏表 —— 单列被人为拖窄不会误伤。
+         */
+        (function migrateSqueezedTables() {
+            const FLAG = 'pastedTableLayoutReset.v2';
+            const MIN_READABLE = (window.TableResize && window.TableResize.MIN_READABLE) || 110;
+            try { if (localStorage.getItem(FLAG)) return; } catch (e) { return; }
+
+            const fixHtml = (html) => {
+                if (typeof html !== 'string' || html.indexOf('pasted-table') === -1) return html;
+                if (html.indexOf('data-rsz-frozen') === -1) return html;
+                const box = document.createElement('div');
+                box.innerHTML = html;
+                let touched = 0;
+                box.querySelectorAll('table.pasted-table[data-rsz-frozen]').forEach(t => {
+                    // 命令行 / API 明确设过尺寸的表，是用户要的样子，不参与自动修复
+                    if (t.getAttribute('data-rsz-manual')) return;
+                    const firstRow = t.rows && t.rows[0];
+                    if (!firstRow || firstRow.children.length < 3) return;
+                    const widths = [];
+                    for (let i = 0; i < firstRow.children.length; i++) {
+                        const cell = firstRow.children[i];
+                        const w = parseFloat(cell.style && cell.style.width);
+                        widths.push(isNaN(w) ? 0 : w);   // 没写内联宽度的当 0，视为窄
+                    }
+                    const narrow = widths.filter(w => w < MIN_READABLE).length;
+                    if (narrow <= widths.length / 3) return;   // 只是个别列窄，属正常
+                    t.removeAttribute('data-rsz-frozen');
+                    t.style.tableLayout = '';
+                    t.style.width = '';
+                    t.style.minWidth = '';
+                    if (!t.getAttribute('style')) t.removeAttribute('style');
+                    t.querySelectorAll('th, td').forEach(c => {
+                        c.style.width = '';
+                        c.style.boxSizing = '';
+                        if (!c.getAttribute('style')) c.removeAttribute('style');
+                    });
+                    touched++;
+                });
+                return touched ? box.innerHTML : html;
+            };
+
+            let changed = 0;
+            const walk = (list) => (Array.isArray(list) ? list : []).forEach(n => {
+                if (!n) return;
+                const next = fixHtml(n.content);
+                if (next !== n.content) { n.content = next; changed++; }
+                if (Array.isArray(n.comments)) {
+                    n.comments.forEach(c => {
+                        if (!c || typeof c.text !== 'string') return;
+                        const ct = fixHtml(c.text);
+                        if (ct !== c.text) { c.text = ct; changed++; }
+                    });
+                }
+            });
+            walk(notes);
+            walk(archivedNotes);
+
+            try { localStorage.setItem('archived_notes', JSON.stringify(archivedNotes)); } catch (e) {}
+            if (changed) save();
+            else { try { localStorage.setItem('notes', JSON.stringify(notes)); } catch (e) {} }
+            try { localStorage.setItem(FLAG, '1'); } catch (e) {}
+            if (changed) console.log('[table] 已解冻被压坏的表格 ' + changed + ' 处');
         })();
 
         // 通过 window.createSync(deps) 注入渲染端依赖，不改动任何原有任务逻辑：

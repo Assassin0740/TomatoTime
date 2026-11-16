@@ -38,8 +38,14 @@
 
     // ---------- 常量 ----------
     const EDGE = 7;        // 距边框多少像素内判定命中
-    const MIN_COL = 40;    // 列宽下限
+    const MIN_COL = 40;    // 列宽下限（手动拖拽）
     const MIN_ROW = 24;    // 行高下限
+    // 【2026-11-16】自动缩放（fitTableToWidth）时的可读下限。
+    // 起因：一张 12 列的表因为某列装了 16000px 宽的 Base64，整表 18250px。
+    // 按比例硬压到容器 884px 后，另外 11 列只剩 40px —— 2000 字的文本竖成一列字，
+    // 比溢出更难读。缩放的目的是「看得见」，不是「必须塞进去」：
+    // 宁可让表格比容器宽、交给 .pasted-table-wrap 横向滚动，也不能把列压死。
+    const MIN_READABLE = 110;
     const DEFAULT_COL = 120; // 自动列在没有历史宽度时的兜底宽度
     const STORAGE_KEY = 'taskTableLayout.v1';
 
@@ -258,6 +264,8 @@
      */
     function fitTableToWidth(table) {
         if (!table || !table.getAttribute('data-rsz-frozen')) return false;
+        // 命令行 / API 明确设过的宽度就是用户要的宽度，别自作聪明缩放
+        if (table.getAttribute('data-rsz-manual')) return false;
         const wrap = table.parentElement;
         if (!wrap) return false;
         const avail = wrap.clientWidth;
@@ -275,14 +283,26 @@
         if (!total || total <= avail) return false; // 没超，保持用户拖出来的宽度
 
         const ratio = avail / total;
-        const widths = current.map(w => Math.max(MIN_COL, Math.round(w * ratio)));
-        // 取整可能多出 1-2px，从最宽的一列里扣掉，确保永远不超容器
+        // 【2026-11-16】每列的缩放下限 = min(它原本的宽度, 可读宽度)。
+        //   · 原本就宽（368px）的列 → 最多压到下限，保住可读性；
+        //   · 原本就窄（40px）的列 → 不因为缩放反而被抬高，保持原样。
+        // 下限按列数分档：12 列的长表用 MIN_READABLE（否则压成「一列字」）；
+        // 5 列以内的表用 MIN_COL，否则 5×110=550 会把 420px 的表格视图顶出滚动条。
+        const floor = current.length >= 8 ? MIN_READABLE : MIN_COL;
+        const widths = current.map(w => Math.max(Math.min(w, floor), Math.round(w * ratio)));
         let sum = widths.reduce((a, b) => a + b, 0);
-        while (sum > avail) {
-            const i = widths.indexOf(Math.max.apply(null, widths));
-            if (widths[i] <= MIN_COL) break;
-            widths[i] -= 1;
-            sum -= 1;
+        // 【2026-11-16】关键：压不进容器时**不要**硬扣。
+        // 老版本为了「永远不超容器」，从最宽列一路扣到 MIN_COL，结果就是
+        // 「1 列 444px + 11 列 40px」。可读性比「不溢出一条像素」重要得多 ——
+        // 溢出的部分外层 wrap 能横向滚动，压死的列却再也救不回来。
+        // 只做取整级别的微调（超出量小于列数时，每列匀掉 1px）。
+        if (sum > avail && sum - avail <= widths.length) {
+            while (sum > avail) {
+                const i = widths.indexOf(Math.max.apply(null, widths));
+                if (widths[i] <= MIN_COL) break;
+                widths[i] -= 1;
+                sum -= 1;
+            }
         }
         for (let r = 0; r < table.rows.length; r++) {
             const cells = table.rows[r].children;
@@ -295,12 +315,79 @@
         return true;
     }
 
+    /**
+     * 【2026-11-16】给「列多到均分也不可读」的表格打标记。
+     *
+     * 判据只看「容器宽 ÷ 列数」，不看表格自己有多宽 —— 因为加了标记后表格会变宽，
+     * 若按表格宽度判定就会「加标记 → 变宽 → 撤标记 → 变窄」来回抖动。
+     * 容器宽和列数都是稳定的，所以判定稳定。
+     *
+     * CSS 里会给 data-rsz-squeezed 的单元格一个可读的 min-width，
+     * 表格因此比容器宽，由 .pasted-table-wrap 的 overflow-x:auto 横向滚动。
+     */
+    function markReadableFloor(table) {
+        if (!table || table.getAttribute('data-rsz-frozen')) return false;
+        const wrap = table.parentElement;
+        const firstRow = table.rows && table.rows[0];
+        if (!wrap || !firstRow) return false;
+        const cols = firstRow.children.length;
+        const avail = wrap.clientWidth;
+        if (!cols || !avail) return false;
+        // 【2026-11-16】只处理「列多到一屏塞不下」的长表。
+        // 5 列表在 420px 的表格视图里均分只有 84px，但那是这个视图本来的样子，
+        // 强行抬到 110 会让所有表都出现横向滚动，还干扰列宽拖拽（探针实测：
+        // 拖宽的表被 min-width 顶回来，用户会觉得「又拖不动了」）。
+        if (cols < 8) {
+            table.removeAttribute('data-rsz-squeezed');
+            return false;
+        }
+        const squeezed = avail / cols < MIN_READABLE;
+        if (squeezed) table.setAttribute('data-rsz-squeezed', '1');
+        else table.removeAttribute('data-rsz-squeezed');
+        return squeezed;
+    }
+
+    /** 冻结表是否已经被压坏：超过 1/3 的列窄到装不下可读文本 */
+    function isSqueezedFrozen(table) {
+        if (!table || !table.getAttribute('data-rsz-frozen')) return false;
+        // 命令行 / API 明确设过的尺寸是有意为之，不参与自动修复
+        if (table.getAttribute('data-rsz-manual')) return false;
+        const firstRow = table.rows && table.rows[0];
+        // 列太少的表不存在「被超长内容带偏」这回事，窄就是用户自己拖窄的
+        if (!firstRow || firstRow.children.length < 6) return false;
+        let narrow = 0;
+        for (let i = 0; i < firstRow.children.length; i++) {
+            if (Math.round(firstRow.children[i].getBoundingClientRect().width) < MIN_READABLE) narrow++;
+        }
+        // 阈值取 1/3 而不是 1/2：12 列表里 6 列被历史坏值压成 46px 时，
+        // 「一半」判不出来，但用户的观感已经是「字全竖着」。
+        // 解冻只会发生一次（解冻后就没有 data-rsz-frozen 了），不会反复重置。
+        return narrow > firstRow.children.length / 3;
+    }
+
     /** 页面里所有冻结表格贴合容器（重开应用读到旧内容 / 窗口缩放时统一兜住） */
     function fitAllFrozenTables(root) {
         const scope = root && root.querySelectorAll ? root : document;
-        const tables = scope.querySelectorAll('table[data-rsz-frozen]');
+        const tables = Array.prototype.slice.call(scope.querySelectorAll('table[data-rsz-frozen]'));
         let n = 0;
-        for (let i = 0; i < tables.length; i++) if (fitTableToWidth(tables[i])) n++;
+        for (let i = 0; i < tables.length; i++) {
+            const table = tables[i];
+            // 【2026-11-16】先治「已经压坏」的表。冻结记录下来的是像素列宽，一旦
+            // 被某一列的超长内容（Base64 / URL）带偏成上万像素，再按比例压回来就是
+            // 「11 列 40px + 1 列 444px」，字竖着排、比溢出更难读，而且原始比例在
+            // 第一次压缩时就永久丢了，反复 fit 只会在坏值上来回打转。
+            // 这种记录没有保留价值 —— 解冻交还 auto 布局，再按可读下限横向滚动。
+            if (isSqueezedFrozen(table)) {
+                unfreezeTableLayout(table);
+                markReadableFloor(table);
+                n++;
+                continue;
+            }
+            if (fitTableToWidth(table)) n++;
+        }
+        // 没冻结但被列数挤扁的表也一并处理
+        const plain = scope.querySelectorAll('table.pasted-table:not([data-rsz-frozen])');
+        for (let i = 0; i < plain.length; i++) markReadableFloor(plain[i]);
         return n;
     }
 
@@ -556,6 +643,11 @@
         // .pasted-table 的 min-width:100% 会让「设窄」失效，必须压掉
         table.style.minWidth = '0';
         table.setAttribute('data-rsz-frozen', '1');
+        // 【2026-11-16】命令行 / API 明确指定的尺寸要保护起来：
+        // `table set --cols 60,60,60,60` 是用户想要 4 列各 60px，
+        // 但 fitAllFrozenTables 看到「过半列窄于可读宽度」会当成坏表解冻，
+        // 结果命令执行了却看不到效果。打上 manual 标记，自动修复就绕开它。
+        table.setAttribute('data-rsz-manual', '1');
         return total;
     }
 
@@ -824,6 +916,7 @@
         saveTaskLayout: saveLayout,
         MIN_COL: MIN_COL,
         MIN_ROW: MIN_ROW,
+        MIN_READABLE: MIN_READABLE,
         DEFAULT_COL: DEFAULT_COL
     };
 });
