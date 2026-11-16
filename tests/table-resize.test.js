@@ -429,3 +429,51 @@ test('命令行设置过的表格打 manual 标记，自动修复绕开它', () 
             f + ' 的 v2 迁移没有跳过 manual 表');
     });
 });
+
+/**
+ * 【2026-11-16 第二次「宽度还是有问题」】表格视图里的长表会把整列撑到 3 万像素。
+ *
+ * 三个条件缺一不可，这里逐条钉死：
+ *   ① white-space: normal —— .task-table 的 nowrap 会被继承进单元格，不换行；
+ *   ② overflow-wrap: anywhere —— 只有它能压低 min-content（break-word 不能）；
+ *   ③ .table-content .pasted-table { min-width: 0 } —— 否则
+ *      「td 宽 ← 内容 min-content ← 表 min-width:100% ← td 宽」死锁，缩不回来。
+ */
+test('表格单元格必须可换行、长 token 可断、表格视图里不锁 min-width', () => {
+    ['style.css', 'web/style.css'].forEach(f => {
+        const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+        const start = css.indexOf('.pasted-table th,');
+        assert.ok(start !== -1, f + ' 找不到 .pasted-table th/td 规则');
+        const block = css.slice(start, css.indexOf('}', start) + 1);
+        assert.ok(/white-space:\s*normal/.test(block),
+            f + '：单元格没有 white-space:normal —— 会继承 .task-table 的 nowrap，内容不换行');
+        assert.ok(/overflow-wrap:\s*anywhere/.test(block),
+            f + '：缺少 overflow-wrap:anywhere —— word-break:break-word 压不低 min-content');
+        assert.ok(/\.table-content \.pasted-table \{[^}]*min-width:\s*0/.test(css),
+            f + '：缺少 .table-content .pasted-table{min-width:0} —— 会和 td 宽度互相锁死');
+    });
+});
+
+/**
+ * 【2026-11-16 第三轮】任务表格的列规则污染了嵌套的粘贴表格。
+ *
+ * `.task-table td:nth-child(8) { white-space: nowrap }` 没限定直接子代，
+ * 于是匹配到 `.task-table` 里**任意深度**的第 8 个 td —— 包括粘贴表格的第 8 列。
+ * 那一列被 nowrap 后不换行，内容把整表撑到 32273px，任务内容列跟着 32301px，
+ * 整个表格视图横向滚 3 万像素。specificity (0,2,1) 还压过了 `.pasted-table td`。
+ *
+ * 这里钉死：所有针对任务表格单元格的属性规则必须写成
+ * `.task-table > thead > tr > th` / `.task-table > tbody > tr > td`。
+ */
+test('任务表格的列规则必须限定直接子代，不得污染嵌套表格', () => {
+    ['style.css', 'web/style.css'].forEach(f => {
+        const css = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+        const loose = [...css.matchAll(/\.task-table\s+(?:th|td)(?::nth-child\(\d+\))?\s*[,{]/g)]
+            .map(m => m[0]);
+        assert.deepStrictEqual(loose, [],
+            f + ' 里还有未限定直接子代的 .task-table th/td 规则：' + loose.join(' / ') +
+            ' —— 会匹配嵌套的 .pasted-table 单元格');
+        assert.ok(/\.task-table > tbody > tr > td:nth-child\(8\)/.test(css),
+            f + ' 第 8 列规则没有改成直接子代形式');
+    });
+});

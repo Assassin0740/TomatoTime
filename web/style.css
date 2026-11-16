@@ -1478,13 +1478,13 @@
         }
 
         /* 任务内容列：整表下限之外再单独兜一层，避免被同行的高列挤扁 */
-        .task-table th:nth-child(1),
-        .task-table td:nth-child(1) {
+        .task-table > thead > tr > th:nth-child(1),
+        .task-table > tbody > tr > td:nth-child(1) {
             min-width: 280px;
         }
 
-        .task-table th,
-        .task-table td {
+        .task-table > thead > tr > th,
+        .task-table > tbody > tr > td {
             /* 【2026-09-30】内边距从 14×18 收到 13×14：窄窗口下每列省 8px，
                7 列合计约 56px，减少"必须横向滚动"的概率 */
             padding: 13px 14px;
@@ -1493,36 +1493,36 @@
         }
 
         /* 操作列（评论/完成/删除三个按钮）按内容收缩，不参与压缩也不浪费空白 */
-        .task-table th:nth-child(8),
-        .task-table td:nth-child(8) {
+        .task-table > thead > tr > th:nth-child(8),
+        .task-table > tbody > tr > td:nth-child(8) {
             width: 1%;
             white-space: nowrap;
         }
 
-        .task-table th:nth-child(3),
-        .task-table td:nth-child(3) {
+        .task-table > thead > tr > th:nth-child(3),
+        .task-table > tbody > tr > td:nth-child(3) {
             width: 100px;
         }
 
-        .task-table th:nth-child(2),
-        .task-table td:nth-child(2) {
+        .task-table > thead > tr > th:nth-child(2),
+        .task-table > tbody > tr > td:nth-child(2) {
             width: 85px;
         }
 
         /* 项目列（2026-10-20 新增）：内容一般不长，限宽 + 徽标自身省略 */
-        .task-table th:nth-child(4),
-        .task-table td:nth-child(4) {
+        .task-table > thead > tr > th:nth-child(4),
+        .task-table > tbody > tr > td:nth-child(4) {
             width: 110px;
             max-width: 130px;
         }
 
-        .task-table th:nth-child(5),
-        .task-table td:nth-child(5) {
+        .task-table > thead > tr > th:nth-child(5),
+        .task-table > tbody > tr > td:nth-child(5) {
             width: 95px;
             white-space: nowrap;
         }
 
-        .task-table th {
+        .task-table > thead > tr > th {
             background: rgba(0, 0, 0, 0.3);
             font-weight: 600;
             color: #aaa;
@@ -1531,11 +1531,11 @@
             letter-spacing: 0.5px;
         }
 
-        .task-table tr:hover {
+        .task-table > tbody > tr:hover {
             background: rgba(255, 255, 255, 0.05);
         }
 
-        .task-table tr:last-child td {
+        .task-table > tbody > tr:last-child > td {
             border-bottom: none;
         }
 
@@ -1563,7 +1563,7 @@
         }
 
         /* 表头也统一不换行，避免「创建时间」被拆成两行 */
-        .task-table th {
+        .task-table > thead > tr > th {
             white-space: nowrap;
         }
 
@@ -2839,7 +2839,25 @@
             min-width: 56px;
             text-align: left;
             vertical-align: top;
+            /* 【2026-11-16】这三行是一套，缺一条长表就会无限宽：
+               ① white-space: normal —— 表格视图里 .task-table 的单元格/祖先带 nowrap，
+                  会被继承进来，内容根本不换行，后面的断行规则全是空文；
+               ② overflow-wrap: anywhere —— 只有它能影响 **min-content 宽度**
+                  （word-break: break-word 不会）。一格装了 Base64 / 长 URL 时，
+                  min-content 等于整个串的宽度，整表被撑到 3 万多像素；
+               ③ 配合 .table-content .pasted-table { min-width: 0 } 解开
+                  「td 宽 ← 内容 min-content ← 表 min-width:100% ← td 宽」的死锁。 */
+            white-space: normal;
+            overflow-wrap: anywhere;
             word-break: break-word;
+        }
+
+        /* 【2026-11-16】表格视图里不能保留 min-width:100%：
+           它让表格至少和父级一样宽，而父级（td）的宽度又是由表格 min-content
+           推出来的 —— 互相锁死，单元格永远缩不回来。表格视图的单元格本来就窄，
+           「铺满容器」没有意义，按内容宽度走即可。 */
+        .table-content .pasted-table {
+            min-width: 0;
         }
 
         /* 【2026-11-16】列太多、均分也塞不下一个字行的表格（典型：从后台复制的
