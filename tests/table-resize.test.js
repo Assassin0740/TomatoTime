@@ -77,9 +77,9 @@ test('web/table-resize.js 与主版本完全一致', () => {
     assert.strictEqual(read('table-resize.js'), read('web/table-resize.js'));
 });
 
-test('sw.js：版本升到 v2.3.5 且预缓存清单含 table-resize.js', () => {
+test('sw.js：版本升到 v2.3.6 且预缓存清单含 table-resize.js', () => {
     const sw = read('web/sw.js');
-    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.5';"));
+    assert.ok(sw.includes("const CACHE_VERSION = 'v2.3.6';"));
     assert.ok(sw.includes("'./table-resize.js'"));
 });
 

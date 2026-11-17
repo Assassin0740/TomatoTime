@@ -401,8 +401,15 @@
                 <h4>关于</h4>
                 <div class="settings-hint" id="aboutVersion">版本读取中…</div>
                 <div class="settings-hint" id="updateStatus">点下面的按钮检查是否有新版本</div>
+                <div class="update-progress" id="updateProgressWrap" style="display: none;">
+                    <div class="update-progress-track"><i id="updateProgressBar"></i></div>
+                    <div class="update-progress-text" id="updateProgressText"></div>
+                </div>
                 <button id="checkUpdateBtn" class="settings-btn-block">🔄 检查更新</button>
                 <button id="downloadUpdateBtn" class="settings-btn-block info" style="display: none;">⬇️ 下载新版本</button>
+                <div class="settings-hint">
+                    新版本会在后台自动下载，<b>退出应用后自动替换</b>，下次打开就是新版；也可以直接点「立即重启更新」。
+                </div>
                 <div class="settings-hint">
                     <b>快捷键</b>：Ctrl+Alt+Space 开始/暂停 · Ctrl+Alt+M 切换模式 · Ctrl+Alt+F 悬浮窗 · Ctrl+Alt+N 快速记录
                 </div>

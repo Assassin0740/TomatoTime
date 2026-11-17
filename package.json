@@ -1,14 +1,15 @@
 {
   "name": "timer-app",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "专注计时器 · 悬浮窗 + 任务管理 + 本地 AI 接入 API + 表格 WebHook 同步",
   "author": "廖中钰",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js tests/media-format.test.js tests/archive.test.js tests/editor-provider.test.js tests/task-info.test.js tests/settings-tabs.test.js tests/annotation-layer.test.js tests/web-dom.test.js tests/table-resize.test.js tests/sync-status.test.js",
+    "test": "node --test tests/api.test.js tests/webhook.test.js tests/store.test.js tests/clipboard-table.test.js tests/media-format.test.js tests/archive.test.js tests/editor-provider.test.js tests/task-info.test.js tests/settings-tabs.test.js tests/annotation-layer.test.js tests/web-dom.test.js tests/table-resize.test.js tests/sync-status.test.js tests/updater.test.js",
     "build": "electron-builder",
     "build:dir": "electron-builder --dir",
+    "build:update": "node scripts/build-update.js",
     "deploy:local": "node scripts/deploy-local.js"
   },
   "build": {
@@ -36,7 +37,9 @@
       "仕事終わったよ.wav",
       "休憩終わったよ.wav",
       "archive.js",
-      "editor-provider.js"
+      "editor-provider.js",
+      "updater.js",
+      "apply-update.js"
     ],
     "win": {
       "target": "nsis",

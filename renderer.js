@@ -5650,64 +5650,199 @@
                 : '专注计时器（网页版，数据保存在本机浏览器）';
         })();
 
-        // 关于页：检查更新（安装包放在服务器 /timer/release/<版本号>/ 下）
+        // 关于页：无感更新（后台下载 → 退出时自动替换 → 下次打开即新版）
         (() => {
             const statusEl = document.getElementById('updateStatus');
             const checkBtn = document.getElementById('checkUpdateBtn');
-            const downloadBtn = document.getElementById('downloadUpdateBtn');
-            if (!statusEl || !checkBtn || !downloadBtn) return;
+            const actionBtn = document.getElementById('downloadUpdateBtn');
+            if (!statusEl || !checkBtn || !actionBtn) return;
 
-            let lastInfo = null;
-            let checking = false;
-            const fmtSize = (n) => (n > 0 ? (n / 1048576).toFixed(1) + ' MB' : '');
+            const progWrap = document.getElementById('updateProgressWrap');
+            const progBar = document.getElementById('updateProgressBar');
+            const progText = document.getElementById('updateProgressText');
 
-            async function runCheck(manual) {
-                if (checking) return;
-                checking = true;
-                checkBtn.disabled = true;
-                statusEl.textContent = '正在检查更新…';
-                downloadBtn.style.display = 'none';
-                try {
-                    const ipc = getElectronIpc();
-                    if (!ipc) throw new Error('网页版不能自动更新，请直接用浏览器打开 gdpudev.cn/timer/');
-                    const info = await ipc.invoke('update:check');
-                    lastInfo = info;
-                    if (!info || !info.ok) throw new Error((info && info.error) || '检查失败');
-                    if (info.hasUpdate) {
-                        const extra = [fmtSize(info.size), info.date].filter(Boolean).join(' · ');
-                        statusEl.innerHTML = `发现新版本 <b>v${info.latest}</b>（当前 v${info.current}）` + (extra ? ` · ${extra}` : '');
-                        downloadBtn.textContent = `⬇️ 下载 v${info.latest}`;
-                        downloadBtn.style.display = '';
-                    } else {
-                        statusEl.innerHTML = `已是最新版本 <b>v${info.current}</b>`;
-                    }
-                } catch (e) {
-                    statusEl.textContent = '检查失败：' + ((e && e.message) || e) + (manual ? '（稍后可以再试）' : '');
-                } finally {
-                    checking = false;
-                    checkBtn.disabled = false;
-                }
+            const ipc = getElectronIpc();
+            let lastState = null;
+            let prevPhase = '';
+
+            const fmtSize = (n) => {
+                const v = Number(n) || 0;
+                if (v <= 0) return '';
+                if (v < 1024) return v + ' B';
+                if (v < 1048576) return (v / 1024).toFixed(0) + ' KB';
+                return (v / 1048576).toFixed(1) + ' MB';
+            };
+
+            function setProgress(show, percent, text) {
+                if (progWrap) progWrap.style.display = show ? '' : 'none';
+                if (progBar) progBar.style.width = Math.max(0, Math.min(100, Number(percent) || 0)) + '%';
+                if (progText) progText.textContent = text || '';
             }
 
-            checkBtn.onclick = () => runCheck(true);
-            downloadBtn.onclick = async () => {
-                if (!lastInfo || !lastInfo.url) return;
+            function showAction(label, act) {
+                actionBtn.textContent = label;
+                actionBtn.dataset.act = act;
+                actionBtn.style.display = '';
+                actionBtn.disabled = false;
+            }
+
+            function hideAction() {
+                actionBtn.style.display = 'none';
+                actionBtn.disabled = false;
+            }
+
+            /** 把主进程推来的状态画到界面上 */
+            function render(s) {
+                if (!s) return;
+                lastState = s;
+                const phase = s.phase || 'idle';
+
+                if (phase === 'checking') {
+                    statusEl.textContent = '正在检查更新…';
+                    setProgress(false);
+                    checkBtn.disabled = true;
+                    hideAction();
+                    return;
+                }
+                checkBtn.disabled = false;
+
+                if (phase === 'up-to-date') {
+                    statusEl.innerHTML = '已是最新版本 <b>v' + s.current + '</b>';
+                    setProgress(false);
+                    hideAction();
+                    return;
+                }
+
+                if (phase === 'available') {
+                    const size = fmtSize(s.total);
+                    const extra = [s.date, size].filter(Boolean).join(' · ');
+                    statusEl.innerHTML = '发现新版本 <b>v' + s.latest + '</b>（当前 v' + s.current + '）'
+                        + (extra ? '<br>' + extra : '');
+                    setProgress(false);
+                    if (s.enabled) showAction('⬇️ 立即下载 v' + s.latest, 'download');
+                    else showAction('⬇️ 打开下载页', 'open');
+                    return;
+                }
+
+                if (phase === 'downloading') {
+                    const pct = Number(s.percent) || 0;
+                    const speed = s.bytesPerSecond > 0 ? fmtSize(s.bytesPerSecond) + '/s' : '';
+                    statusEl.innerHTML = '正在后台下载 <b>v' + s.latest + '</b>，可以继续用，不影响操作';
+                    setProgress(true, pct, pct.toFixed(1) + '% · ' + fmtSize(s.transferred) + ' / ' + fmtSize(s.total)
+                        + (speed ? ' · ' + speed : ''));
+                    hideAction();
+                    return;
+                }
+
+                if (phase === 'downloaded') {
+                    statusEl.innerHTML = '<b>v' + s.latest + '</b> 已下载完成，<b>退出应用后自动生效</b>（下次打开就是新版）';
+                    setProgress(true, 100, '下载完成，等待安装');
+                    showAction('🔄 立即重启更新', 'install');
+                    return;
+                }
+
+                if (phase === 'installing') {
+                    statusEl.textContent = '正在安装更新，应用即将重启…';
+                    setProgress(true, 100, '正在替换文件');
+                    hideAction();
+                    return;
+                }
+
+                if (phase === 'error') {
+                    statusEl.innerHTML = '更新不可用：' + (s.error || '未知错误');
+                    setProgress(false);
+                    showAction('⬇️ 手动下载', 'open');
+                    return;
+                }
+
+                statusEl.textContent = '点下面的按钮检查是否有新版本';
+                setProgress(false);
+                hideAction();
+            }
+
+            checkBtn.onclick = async () => {
+                if (!ipc) {
+                    showAppToast('网页版不支持自动更新，请直接访问 gdpudev.cn/timer/');
+                    return;
+                }
+                statusEl.textContent = '正在检查更新…';
+                setProgress(false);
+                checkBtn.disabled = true;
                 try {
-                    const ipc = getElectronIpc();
-                    if (!ipc) throw new Error('网页版不支持');
-                    const r = await ipc.invoke('update:open', lastInfo.url);
-                    if (r && r.ok) showAppToast('已用浏览器打开下载页');
-                    else showAppToast('打开失败：' + ((r && r.error) || '未知错误'));
+                    const s = await ipc.invoke('update:check', { manual: true });
+                    render(s);
+                    if (s && s.phase === 'error') showAppToast('检查失败：' + (s.error || '未知错误'));
                 } catch (e) {
-                    showAppToast('打开失败：' + ((e && e.message) || e));
+                    statusEl.textContent = '检查失败：' + ((e && e.message) || e);
+                } finally {
+                    checkBtn.disabled = false;
                 }
             };
 
-            // 切到「关于」页时自动静默检查一次（不提示失败细节，避免每次开设置都弹）
-            const tabs = document.querySelectorAll('.settings-tab');
-            tabs.forEach(tab => {
+            actionBtn.onclick = async () => {
+                if (!ipc) return;
+                const act = actionBtn.dataset.act || 'download';
+
+                if (act === 'open') {
+                    try {
+                        const r = await ipc.invoke('update:open', lastState && lastState.fullUrl);
+                        showAppToast(r && r.ok ? '已用浏览器打开下载页' : '打开失败：' + ((r && r.error) || '未知错误'));
+                    } catch (e) {
+                        showAppToast('打开失败：' + ((e && e.message) || e));
+                    }
+                    return;
+                }
+
+                if (act === 'download') {
+                    actionBtn.disabled = true;
+                    actionBtn.textContent = '⬇️ 正在下载…';
+                    try {
+                        const s = await ipc.invoke('update:download');
+                        render(s);
+                        if (s && s.ok === false) showAppToast('下载失败：' + (s.error || '未知错误'));
+                    } catch (e) {
+                        showAppToast('下载失败：' + ((e && e.message) || e));
+                    } finally {
+                        actionBtn.disabled = false;
+                    }
+                    return;
+                }
+
+                if (act === 'install') {
+                    actionBtn.disabled = true;
+                    actionBtn.textContent = '正在重启…';
+                    setProgress(true, 100, '正在重启并安装');
+                    try {
+                        const r = await ipc.invoke('update:install');
+                        if (!r || !r.ok) {
+                            showAppToast('安装失败：' + ((r && r.error) || '未知错误'));
+                            actionBtn.disabled = false;
+                        }
+                    } catch (e) {
+                        showAppToast('安装失败：' + ((e && e.message) || e));
+                        actionBtn.disabled = false;
+                    }
+                }
+            };
+
+            // 主进程会实时推送进度；顺便在「刚下完」时提示一次
+            if (ipc && typeof ipc.on === 'function') {
+                ipc.on('update:state', (evt, s) => {
+                    if (s && s.phase === 'downloaded' && prevPhase !== 'downloaded') {
+                        showAppToast('v' + s.latest + ' 已下载完成，退出应用后自动生效');
+                    }
+                    if (s) prevPhase = s.phase;
+                    render(s);
+                });
+                // 拉一次当前状态：可能启动时就已经在后台下载了
+                ipc.invoke('update:state').then(render).catch(() => {});
+            }
+
+            // 切到「关于」页时顺手静默检查一次（失败不打扰）
+            document.querySelectorAll('.settings-tab').forEach(tab => {
                 tab.addEventListener('click', () => {
-                    if (tab.dataset.tab === 'about') runCheck(false);
+                    if (!ipc || tab.dataset.tab !== 'about') return;
+                    ipc.invoke('update:check', { manual: false }).then(render).catch(() => {});
                 });
             });
         })();

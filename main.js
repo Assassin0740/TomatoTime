@@ -1222,6 +1222,13 @@ app.whenReady().then(() => {
     } catch (e) {
         console.error('[boot] 应用级能力初始化失败：', e);
     }
+
+    // 无感更新：延迟静默检查，不占启动时间、不打扰用户
+    try {
+        scheduleUpdateChecks();
+    } catch (e) {
+        console.error('[boot] 更新检查初始化失败：', e);
+    }
     
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1245,6 +1252,18 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
     appIsQuitting = true;
     trayCreated = false; // 重置托盘标志
+
+    // 新版本已经下好了？借这次退出把文件换掉（不重启，用户下次打开就是新版）
+    // 必须放在清理最前面：要赶在窗口销毁、进程退出之前把落地脚本拉起来
+    try {
+        if (updater) {
+            const r = updater.applyOnQuit();
+            if (r && r.ok) console.log('[updater] 已安排退出后安装，下次启动生效');
+            else if (r && r.error) console.log('[updater] 未安排安装：' + r.error);
+        }
+    } catch (e) {
+        console.error('[updater] 安排退出安装失败：', e);
+    }
 
     // 注销全局快捷键、关闭 API 服务、停止提醒轮询，避免留下占用端口 / 热键的僵尸
     try {
@@ -2592,134 +2611,94 @@ ipcMain.handle('main-settings:set', (event, patch) => {
 // 【2026-09-30】设置面板「关于」页要显示版本号：渲染进程无法直接读 package.json
 ipcMain.handle('app:version', () => app.getVersion());
 
-// ==================== 检查更新 ====================
-// 安装包放在 https://www.gdpudev.cn/timer/release/<版本号>/ 下；
-// 元数据优先读同目录的 latest.json，没有就退回解析 nginx 目录列表（取最大版本号）。
-const UPDATE_BASE = 'https://www.gdpudev.cn/timer/release';
+// ==================== 检查更新 / 无感更新 ====================
+// 细节见 updater.js 顶部注释。要点：
+//   ① 更新只替换 resources 下的 app.asar 与三个 CLI 文件，不走 NSIS 全量安装包
+//   ② 启动后静默检查 → 后台下载 → 退出应用时自动替换 → 下次打开即新版
+//   ③ 清单与旧版共用 /timer/release/latest.json，老客户端仍能读到 version/url 字段
+const updaterLib = require('./updater');
 
-function httpGetText(url, timeoutMs) {
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = (err, data) => {
-            if (settled) return;
-            settled = true;
-            if (err) reject(err); else resolve(data);
-        };
-        let req;
-        try {
-            req = require('https').get(url, {
-                timeout: timeoutMs || 8000,
-                headers: {
-                    'User-Agent': 'timer-app/' + app.getVersion(),
-                    'Accept': 'application/json,text/html,*/*',
-                    'Accept-Encoding': 'identity',
-                    'Cache-Control': 'no-cache'
-                }
-            }, (res) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    res.resume();
-                    const next = new URL(res.headers.location, url).href;
-                    httpGetText(next, timeoutMs).then(d => finish(null, d), e => finish(e));
-                    return;
-                }
-                if (res.statusCode !== 200) {
-                    res.resume();
-                    finish(new Error('HTTP ' + res.statusCode));
-                    return;
-                }
-                const chunks = [];
-                res.on('data', c => chunks.push(c));
-                res.on('end', () => finish(null, Buffer.concat(chunks).toString('utf8')));
-                res.on('error', e => finish(e));
-            });
-            req.on('timeout', () => req.destroy(new Error('请求超时')));
-            req.on('error', e => finish(e));
-        } catch (e) {
-            finish(e);
+// 更新源：正常走线上地址；演练/灰度时可以用 TIMER_UPDATE_FEED 指到本地 http 服务
+const UPDATE_FEED = String(process.env.TIMER_UPDATE_FEED || updaterLib.DEFAULT_FEED).replace(/\/+$/, '');
+/** 暂存目录放 appData 而不是 userData：清理本地数据时不该把正在下载的包一起删掉 */
+const UPDATE_CACHE_DIR = path.join(app.getPath('appData'), 'timer-app-updater');
+
+let updater = null;
+
+function getUpdater() {
+    if (updater) return updater;
+    updater = updaterLib.createUpdater({
+        currentVersion: app.getVersion(),
+        installDir: path.dirname(process.execPath),
+        exeName: path.basename(process.execPath),
+        cacheDir: UPDATE_CACHE_DIR,
+        feedUrl: UPDATE_FEED,
+        autoDownload: true,
+        // 开发态（electron .）只允许检查，绝不下载/安装：此时 process.execPath 是 electron.exe，
+        // 真按「安装目录」去替换会把源码目录写坏
+        enabled: app.isPackaged,
+        log: (msg) => console.log(msg),
+        onState: (s) => {
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:state', s);
+            if (floatWindow && !floatWindow.isDestroyed()) floatWindow.webContents.send('update:state', s);
         }
     });
-}
-
-function parseVerParts(v) {
-    return String(v || '').replace(/^v/i, '').split(/[.+-]/).slice(0, 3).map(n => parseInt(n, 10) || 0);
-}
-
-function cmpVersion(a, b) {
-    const A = parseVerParts(a);
-    const B = parseVerParts(b);
-    for (let i = 0; i < 3; i++) {
-        const x = A[i] || 0;
-        const y = B[i] || 0;
-        if (x !== y) return x > y ? 1 : -1;
-    }
-    return 0;
-}
-
-async function fetchUpdateInfo() {
-    const current = app.getVersion();
-
-    // 1) latest.json（推荐，能带上更新说明和文件大小）
     try {
-        const txt = await httpGetText(UPDATE_BASE + '/latest.json?t=' + Date.now(), 8000);
-        const info = JSON.parse(txt);
-        if (info && info.version) {
-            const file = info.file || '';
-            return {
-                ok: true,
-                current: current,
-                latest: String(info.version).replace(/^v/i, ''),
-                url: info.url || (file ? UPDATE_BASE + '/' + info.version + '/' + encodeURIComponent(file) : UPDATE_BASE + '/' + info.version + '/'),
-                notes: info.notes || '',
-                date: info.date || '',
-                size: Number(info.size) || 0,
-                source: 'latest.json'
-            };
-        }
-    } catch (e) { /* 没配 latest.json 就走下面的目录列表 */ }
-
-    // 2) 退回目录列表：/timer/release/ 下有 1.1.0/ 1.1.1/ …
-    const listHtml = await httpGetText(UPDATE_BASE + '/?t=' + Date.now(), 8000);
-    const versions = Array.from(new Set(
-        (listHtml.match(/href="[^"]*?(\d+\.\d+\.\d+)\/?"/g) || []).map(m => (m.match(/(\d+\.\d+\.\d+)/) || [])[1]).filter(Boolean)
-    ));
-    if (!versions.length) throw new Error('服务器上没有找到版本目录');
-    versions.sort(cmpVersion);
-    const latest = versions[versions.length - 1];
-    const dirHtml = await httpGetText(UPDATE_BASE + '/' + latest + '/?t=' + Date.now(), 8000);
-    const exeMatch = dirHtml.match(/href="([^"]+\.exe)"/i);
-    const file = exeMatch ? decodeURIComponent(exeMatch[1]) : '';
-    return {
-        ok: true,
-        current: current,
-        latest: latest,
-        url: file ? UPDATE_BASE + '/' + latest + '/' + encodeURIComponent(file) : UPDATE_BASE + '/' + latest + '/',
-        notes: '',
-        date: '',
-        size: 0,
-        source: 'autoindex'
-    };
-}
-
-ipcMain.handle('update:check', async () => {
-    try {
-        const info = await fetchUpdateInfo();
-        info.hasUpdate = cmpVersion(info.latest, info.current) > 0;
-        return info;
+        updater.reconcile();
     } catch (e) {
-        return { ok: false, current: app.getVersion(), error: (e && e.message) || String(e) };
+        console.error('[updater] 启动对账失败：', e);
+    }
+    return updater;
+}
+
+ipcMain.handle('update:state', () => getUpdater().state());
+
+ipcMain.handle('update:check', async (event, opts) => {
+    const s = await getUpdater().check({ manual: !!(opts && opts.manual) });
+    return Object.assign({ ok: s.phase !== 'error' }, s);
+});
+
+ipcMain.handle('update:download', async () => {
+    try {
+        const s = await getUpdater().download();
+        return Object.assign({ ok: true }, s);
+    } catch (e) {
+        return { ok: false, error: (e && e.message) || String(e) };
     }
 });
 
+// 立即重启安装：先拉起落地脚本（它等本进程退出后再替换文件），再让主进程退出
+ipcMain.handle('update:install', () => {
+    const r = getUpdater().applyAndRestart();
+    if (!r.ok) return r;
+    setTimeout(() => {
+        try { app.quit(); } catch (e) { /* ignore */ }
+    }, 300);
+    return { ok: true };
+});
+
+// 兜底：自动更新不可用（清单还是旧格式 / 开发态）时，用浏览器打开下载页
 ipcMain.handle('update:open', (event, url) => {
-    const target = String(url || '').trim();
+    const target = String(url || '').trim() || UPDATE_FEED + '/';
     if (!/^https?:\/\//i.test(target)) return { ok: false, error: '无效链接' };
     try {
-        require('electron').shell.openExternal(target);
+        shell.openExternal(target);
         return { ok: true };
     } catch (e) {
         return { ok: false, error: (e && e.message) || String(e) };
     }
 });
+
+/** 启动 20 秒后静默查一次，之后每 6 小时一次 */
+function scheduleUpdateChecks() {
+    const run = () => {
+        try { getUpdater().check({ manual: false }); } catch (e) { /* 静默通道，失败不打扰用户 */ }
+    };
+    const first = setTimeout(run, 20000);
+    if (first.unref) first.unref();
+    const loop = setInterval(run, 6 * 60 * 60 * 1000);
+    if (loop.unref) loop.unref();
+}
 
 
 ipcMain.handle('api:regenerate-token', () => {
