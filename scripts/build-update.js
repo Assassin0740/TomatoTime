@@ -130,28 +130,16 @@ function main() {
         // 低于这个版本的客户端没有 updater.js，只能走手动安装，不参与增量
         minVersion: '1.1.1',
         files: files,
-        // 兜底：自动更新不可用时让用户下全量包（zip 需要另外打，这里只是给个地址）
+        // 下面几个字段是给 1.1.x 老客户端用的（它只会读 version/url，然后拿浏览器打开）。
+        // 指向版本目录而不是具体文件：想手动装的人进去自己挑。
+        url: args.feed + '/' + version + '/',
+        file: '',
+        size: 0,
+        // 兜底：自动更新不可用时让用户下全量包
         full: args.feed + '/' + version + '/'
     };
     const manifestPath = path.join(OUT_ROOT, 'latest.json');
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-
-    // 旧的 latest.json 里还有 size/file/install 字段给 1.1.x 老客户端看，这里补上全量包信息
-    const legacyPath = path.join(ROOT, 'dist', 'release', 'latest.json');
-    if (fs.existsSync(legacyPath)) {
-        try {
-            const legacy = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
-            legacy.version = version;
-            legacy.date = manifest.date;
-            legacy.notes = notes;
-            legacy.install = '下载后解压，把「计时器」文件夹里的内容覆盖到原来的安装目录（默认 D:\\Program\\timer-app）。'
-                + '\n提示：从 1.2.0 起支持自动更新，以后在「设置 → 关于」里点检查更新即可。';
-            fs.writeFileSync(legacyPath, JSON.stringify(legacy, null, 2), 'utf8');
-            console.log('\n[build-update] ③ 已同步 dist/release/latest.json（给 1.1.x 老客户端）');
-        } catch (e) {
-            console.log('\n[build-update] ③ 同步老 latest.json 失败（不影响新通道）：' + e.message);
-        }
-    }
 
     console.log('\n[build-update] ✓ 完成：v%s，共 %d 个文件，合计 %s', version, files.length, human(total));
     console.log('\n需要上传到 ' + args.feed + ' ：');
