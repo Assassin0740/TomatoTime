@@ -123,6 +123,32 @@ function main() {
     if (!files.length) die('一个文件都没收集到，检查构建产物');
 
     const notes = args.notes || defaultNotes();
+    // 全量安装包（可选）：存在就回填给 1.1.x 老客户端用的 url/file/size/sha256。
+    // 老客户端没有 updater.js，只认这几个字段 —— 少了它只会打开一个目录，
+    // 用户进去面对一堆 .asar 无从下手，所以有 zip 就优先指到 zip。
+    const fullZipName = 'timer-setup-' + version + '-win64.zip';
+    const fullZipPath = path.join(ROOT, 'dist', fullZipName);
+    const hasFullZip = fs.existsSync(fullZipPath);
+    let legacy = {};
+    if (hasFullZip) {
+        const st = fs.statSync(fullZipPath);
+        legacy = {
+            file: fullZipName,
+            url: args.feed + '/' + version + '/' + fullZipName,
+            size: st.size,
+            sha256: sha256(fullZipPath),
+            install: '下载后解压，把「计时器」文件夹里的内容覆盖到原来的安装目录（默认 D:\\Program\\timer-app）。'
+                + '\n提示：从 1.2.0 起支持自动更新，装好这一版以后，在「设置 → 关于」点检查更新即可，不用再手动覆盖。'
+        };
+    } else {
+        legacy = {
+            // 没有全量包时退回版本目录 —— 至少让老客户端点得开，不至于 404
+            file: '',
+            url: args.feed + '/' + version + '/',
+            size: 0
+        };
+    }
+
     const manifest = {
         version: version,
         date: new Date().toISOString().slice(0, 10),
@@ -130,13 +156,14 @@ function main() {
         // 低于这个版本的客户端没有 updater.js，只能走手动安装，不参与增量
         minVersion: '1.1.1',
         files: files,
-        // 下面几个字段是给 1.1.x 老客户端用的（它只会读 version/url，然后拿浏览器打开）。
-        // 指向版本目录而不是具体文件：想手动装的人进去自己挑。
-        url: args.feed + '/' + version + '/',
-        file: '',
-        size: 0,
+        // 给 1.1.x 老客户端的兼容字段，见上面 legacy 的说明
+        file: legacy.file,
+        url: legacy.url,
+        size: legacy.size,
+        sha256: legacy.sha256,
+        install: legacy.install,
         // 兜底：自动更新不可用时让用户下全量包
-        full: args.feed + '/' + version + '/'
+        full: (hasFullZip ? legacy.url : args.feed + '/' + version + '/')
     };
     const manifestPath = path.join(OUT_ROOT, 'latest.json');
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
